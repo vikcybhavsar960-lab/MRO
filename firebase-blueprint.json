@@ -1,0 +1,270 @@
+{
+  "entities": {
+    "TestConnection": {
+      "title": "TestConnection",
+      "description": "Read-only connectivity probe document used on app boot.",
+      "type": "object",
+      "properties": {
+        "status": { "type": "string", "maxLength": 32 }
+      },
+      "required": ["status"]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Trusted administrator lookup record.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "format": "email", "maxLength": 160 },
+        "grantedBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "createdAt", "updatedAt"]
+    },
+    "UserPublicProfile": {
+      "title": "UserPublicProfile",
+      "description": "Non-PII workspace user profile.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "role": { "type": "string", "enum": ["MEMBER", "VIEWER"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "displayName", "role", "createdAt", "updatedAt"]
+    },
+    "UserPrivateInfo": {
+      "title": "UserPrivateInfo",
+      "description": "Isolated user PII document restricted to owner or admin.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "format": "email", "maxLength": 160 },
+        "mobile": { "type": "string", "maxLength": 40 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "createdAt", "updatedAt"]
+    },
+    "Workspace": {
+      "title": "Workspace",
+      "description": "Shared company procurement workspace root document.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "companyName": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "ownerUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerEmail": { "type": "string", "format": "email", "maxLength": 160 },
+        "memberUids": { "type": "array", "description": "Bounded list of authorized team member UIDs (max 20)." },
+        "invitedEmails": { "type": "array", "description": "Bounded list of authorized lowercase team member emails (max 20)." },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "companyName", "ownerUid", "ownerEmail", "memberUids", "invitedEmails", "createdAt", "updatedAt"]
+    },
+    "WorkspaceMember": {
+      "title": "WorkspaceMember",
+      "description": "Authorized member entry inside a workspace.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "format": "email", "maxLength": 160 },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "erpRole": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string", "enum": ["ACTIVE", "INACTIVE"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "displayName", "erpRole", "status", "createdAt", "updatedAt"]
+    },
+    "WorkspaceInvite": {
+      "title": "WorkspaceInvite",
+      "description": "Email-keyed teammate invitation for 3-user collaboration.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "format": "email", "maxLength": 160 },
+        "displayName": { "type": "string", "maxLength": 120 },
+        "erpRole": { "type": "string", "maxLength": 64 },
+        "invitedByUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "status": { "type": "string", "enum": ["INVITED", "JOINED", "REVOKED"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "email", "erpRole", "invitedByUid", "status", "createdAt", "updatedAt"]
+    },
+    "ErpVendor": {
+      "title": "ErpVendor",
+      "description": "Supplier/vendor master record stored as native structured map fields.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "workspaceId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "createdByUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "memberUids": { "type": "array" },
+        "invitedEmails": { "type": "array" },
+        "companyName": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "status": { "type": "string", "enum": ["ACTIVE", "INACTIVE", "BLOCKED"] },
+        "isDeleted": { "type": "boolean" },
+        "recordData": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "workspaceId", "ownerUid", "createdByUid", "memberUids", "invitedEmails", "companyName", "isDeleted", "recordData", "createdAt", "updatedAt"]
+    },
+    "ErpEntityRecord": {
+      "title": "ErpEntityRecord",
+      "description": "Structured ERP master or transactional record stored as native Firestore map.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "workspaceId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "createdByUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "memberUids": { "type": "array" },
+        "invitedEmails": { "type": "array" },
+        "title": { "type": "string", "maxLength": 300 },
+        "status": { "type": "string", "maxLength": 64 },
+        "isDeleted": { "type": "boolean" },
+        "recordData": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "workspaceId", "ownerUid", "createdByUid", "memberUids", "invitedEmails", "status", "isDeleted", "recordData", "createdAt", "updatedAt"]
+    },
+    "ErpTombstone": {
+      "title": "ErpTombstone",
+      "description": "Deletion tombstone registry preventing deleted records from resurrecting.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "workspaceId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "createdByUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "memberUids": { "type": "array" },
+        "invitedEmails": { "type": "array" },
+        "deletedIds": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "workspaceId", "ownerUid", "createdByUid", "memberUids", "invitedEmails", "deletedIds", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/test/{docId}": {
+      "schema": "TestConnection",
+      "description": "Connectivity check document /test/connection."
+    },
+    "/admins/{userId}": {
+      "schema": "AdminRecord",
+      "description": "Authoritative admin UID registry."
+    },
+    "/users/{userId}": {
+      "schema": "UserPublicProfile",
+      "description": "Non-PII user display metadata."
+    },
+    "/users/{userId}/private/{infoId}": {
+      "schema": "UserPrivateInfo",
+      "description": "Isolated PII user info accessible only to owner or admin."
+    },
+    "/workspaces/{workspaceId}": {
+      "schema": "Workspace",
+      "description": "Shared company ERP workspace root gate."
+    },
+    "/workspaces/{workspaceId}/members/{memberId}": {
+      "schema": "WorkspaceMember",
+      "description": "Active team members authorized for this workspace."
+    },
+    "/workspaces/{workspaceId}/invites/{inviteId}": {
+      "schema": "WorkspaceInvite",
+      "description": "Invited teammate email registry."
+    },
+    "/workspaces/{workspaceId}/vendors/{vendorId}": {
+      "schema": "ErpVendor",
+      "description": "Supplier/vendor directory."
+    },
+    "/workspaces/{workspaceId}/customers/{customerId}": {
+      "schema": "ErpEntityRecord",
+      "description": "Customer directory."
+    },
+    "/workspaces/{workspaceId}/companies/{companyId}": {
+      "schema": "ErpEntityRecord",
+      "description": "Company master directory."
+    },
+    "/workspaces/{workspaceId}/purchaseExecutives/{execId}": {
+      "schema": "ErpEntityRecord",
+      "description": "Purchase executive contacts per company."
+    },
+    "/workspaces/{workspaceId}/products/{productId}": {
+      "schema": "ErpEntityRecord",
+      "description": "Master product catalog."
+    },
+    "/workspaces/{workspaceId}/brands/{brandId}": {
+      "schema": "ErpEntityRecord",
+      "description": "Brand master directory."
+    },
+    "/workspaces/{workspaceId}/categories/{categoryId}": {
+      "schema": "ErpEntityRecord",
+      "description": "Material categories master."
+    },
+    "/workspaces/{workspaceId}/productTypes/{productTypeId}": {
+      "schema": "ErpEntityRecord",
+      "description": "Product types master."
+    },
+    "/workspaces/{workspaceId}/vendorProductMappings/{mappingId}": {
+      "schema": "ErpEntityRecord",
+      "description": "Vendor-product mapping registry."
+    },
+    "/workspaces/{workspaceId}/requirements/{requirementId}": {
+      "schema": "ErpEntityRecord",
+      "description": "Customer procurement requirements (Stage 1)."
+    },
+    "/workspaces/{workspaceId}/vendorQuotes/{quoteId}": {
+      "schema": "ErpEntityRecord",
+      "description": "Direct vendor rates & quotes (Stage 2)."
+    },
+    "/workspaces/{workspaceId}/quotations/{quotationId}": {
+      "schema": "ErpEntityRecord",
+      "description": "Customer quotations (Stage 4)."
+    },
+    "/workspaces/{workspaceId}/customerPos/{cpoId}": {
+      "schema": "ErpEntityRecord",
+      "description": "Customer purchase orders (Stage 5)."
+    },
+    "/workspaces/{workspaceId}/vendorPos/{vpoId}": {
+      "schema": "ErpEntityRecord",
+      "description": "Vendor purchase orders (Stage 6)."
+    },
+    "/workspaces/{workspaceId}/proformaInvoices/{piId}": {
+      "schema": "ErpEntityRecord",
+      "description": "Vendor proforma invoices (Stage 7)."
+    },
+    "/workspaces/{workspaceId}/payments/{paymentId}": {
+      "schema": "ErpEntityRecord",
+      "description": "Vendor payment records (Stage 8)."
+    },
+    "/workspaces/{workspaceId}/dispatches/{dispatchId}": {
+      "schema": "ErpEntityRecord",
+      "description": "Logistics & dispatch records (Stage 9)."
+    },
+    "/workspaces/{workspaceId}/deliveries/{deliveryId}": {
+      "schema": "ErpEntityRecord",
+      "description": "Delivery & closure records (Stage 10)."
+    },
+    "/workspaces/{workspaceId}/tombstones/{tombstoneId}": {
+      "schema": "ErpTombstone",
+      "description": "Deletion tombstones by entity type to keep 3 users synchronized on deletes."
+    },
+    "/workspaces/{workspaceId}/settings/{settingId}": {
+      "schema": "ErpEntityRecord",
+      "description": "Workspace branding, theme, and accounting settings."
+    },
+    "/workspaces/{workspaceId}/auditLogs/{logId}": {
+      "schema": "ErpEntityRecord",
+      "description": "Immutable operational audit logs."
+    }
+  }
+}

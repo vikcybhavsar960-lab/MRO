@@ -1,0 +1,730 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // =========================================================================
+    // PILLAR 0: GLOBAL DEFAULT-DENY SAFETY NET
+    // =========================================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // =========================================================================
+    // PHASE 3: PRIMITIVES & IDENTITY HELPERS
+    // =========================================================================
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function normalizedEmail() {
+      return request.auth.token.email is string ? request.auth.token.email.lower() : '';
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isBootstrappedAdmin() {
+      return isEmailVerified() && (
+        normalizedEmail() == 'vikcybhavsar960@gmail.com' ||
+        normalizedEmail() == 'vickybhavsar960@gmail.com'
+      );
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() || (
+        isEmailVerified() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isOwner(userId) {
+      return isEmailVerified() && request.auth.uid == userId;
+    }
+
+    function isValidString(val, minLen, maxLen) {
+      return val is string && val.size() >= minLen && val.size() <= maxLen;
+    }
+
+    function isBoundedStringList(val, maxItems) {
+      return val is list && val.size() <= maxItems && (val.size() == 0 || val[0] is string);
+    }
+
+    // =========================================================================
+    // ENTITY VALIDATION BLUEPRINTS (PILLAR 2 & 13: ANTI-UPDATE-GAP + TIMESTAMPS)
+    // =========================================================================
+    function isValidAdminRecord(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'grantedBy', 'createdAt', 'updatedAt']) &&
+        data.uid == userId &&
+        isValidId(data.uid) &&
+        isValidString(data.email, 3, 160) &&
+        (!('grantedBy' in data) || isValidString(data.grantedBy, 1, 128)) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidUserPublicProfile(data, userId) {
+      return data.keys().hasAll(['uid', 'displayName', 'role', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'displayName', 'role', 'createdAt', 'updatedAt']) &&
+        data.uid == userId &&
+        isValidId(data.uid) &&
+        isValidString(data.displayName, 1, 120) &&
+        data.role in ['MEMBER', 'VIEWER'] &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidUserPrivateInfo(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'mobile', 'createdAt', 'updatedAt']) &&
+        data.uid == userId &&
+        isValidId(data.uid) &&
+        isValidString(data.email, 3, 160) &&
+        (!('mobile' in data) || isValidString(data.mobile, 0, 40)) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidWorkspace(data, workspaceId) {
+      return data.keys().hasAll(['id', 'companyName', 'ownerUid', 'ownerEmail', 'memberUids', 'invitedEmails', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'companyName', 'ownerUid', 'ownerEmail', 'memberUids', 'invitedEmails', 'createdAt', 'updatedAt']) &&
+        data.id == workspaceId &&
+        isValidId(data.id) &&
+        isValidString(data.companyName, 1, 200) &&
+        isValidId(data.ownerUid) &&
+        isValidString(data.ownerEmail, 3, 160) &&
+        data.memberUids is list && data.memberUids.size() >= 1 && data.memberUids.size() <= 20 && data.memberUids[0] is string &&
+        isBoundedStringList(data.invitedEmails, 20) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidWorkspaceMember(data, memberId) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'erpRole', 'status', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'displayName', 'erpRole', 'status', 'createdAt', 'updatedAt']) &&
+        data.uid == memberId &&
+        isValidId(data.uid) &&
+        isValidString(data.email, 3, 160) &&
+        isValidString(data.displayName, 1, 120) &&
+        isValidString(data.erpRole, 1, 64) &&
+        data.status in ['ACTIVE', 'INACTIVE'] &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidWorkspaceInvite(data, inviteId) {
+      return data.keys().hasAll(['id', 'email', 'erpRole', 'invitedByUid', 'status', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'email', 'displayName', 'erpRole', 'invitedByUid', 'status', 'createdAt', 'updatedAt']) &&
+        data.id == inviteId &&
+        isValidId(data.id) &&
+        isValidString(data.email, 3, 160) &&
+        (!('displayName' in data) || isValidString(data.displayName, 0, 120)) &&
+        isValidString(data.erpRole, 1, 64) &&
+        isValidId(data.invitedByUid) &&
+        data.status in ['INVITED', 'JOINED', 'REVOKED'] &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidVendorDoc(data, workspaceId, vendorId) {
+      return data.keys().hasAll(['id', 'workspaceId', 'ownerUid', 'createdByUid', 'memberUids', 'invitedEmails', 'companyName', 'isDeleted', 'recordData', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'workspaceId', 'ownerUid', 'createdByUid', 'memberUids', 'invitedEmails', 'companyName', 'status', 'isDeleted', 'recordData', 'createdAt', 'updatedAt']) &&
+        data.id == vendorId &&
+        data.workspaceId == workspaceId &&
+        isValidId(data.id) &&
+        isValidId(data.workspaceId) &&
+        isValidId(data.ownerUid) &&
+        isValidId(data.createdByUid) &&
+        isBoundedStringList(data.memberUids, 20) &&
+        isBoundedStringList(data.invitedEmails, 20) &&
+        isValidString(data.companyName, 1, 240) &&
+        (!('status' in data) || data.status in ['ACTIVE', 'INACTIVE', 'BLOCKED']) &&
+        data.isDeleted is bool &&
+        data.recordData is map &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidEntityRecord(data, workspaceId, docId) {
+      return data.keys().hasAll(['id', 'workspaceId', 'ownerUid', 'createdByUid', 'memberUids', 'invitedEmails', 'status', 'isDeleted', 'recordData', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'workspaceId', 'ownerUid', 'createdByUid', 'memberUids', 'invitedEmails', 'title', 'status', 'isDeleted', 'recordData', 'createdAt', 'updatedAt']) &&
+        data.id == docId &&
+        data.workspaceId == workspaceId &&
+        isValidId(data.id) &&
+        isValidId(data.workspaceId) &&
+        isValidId(data.ownerUid) &&
+        isValidId(data.createdByUid) &&
+        isBoundedStringList(data.memberUids, 20) &&
+        isBoundedStringList(data.invitedEmails, 20) &&
+        (!('title' in data) || isValidString(data.title, 0, 300)) &&
+        isValidString(data.status, 1, 64) &&
+        data.isDeleted is bool &&
+        data.recordData is map &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidTombstoneDoc(data, workspaceId, tombstoneId) {
+      return data.keys().hasAll(['id', 'workspaceId', 'ownerUid', 'createdByUid', 'memberUids', 'invitedEmails', 'deletedIds', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'workspaceId', 'ownerUid', 'createdByUid', 'memberUids', 'invitedEmails', 'deletedIds', 'createdAt', 'updatedAt']) &&
+        data.id == tombstoneId &&
+        data.workspaceId == workspaceId &&
+        isValidId(data.id) &&
+        isValidId(data.workspaceId) &&
+        isValidId(data.ownerUid) &&
+        isValidId(data.createdByUid) &&
+        isBoundedStringList(data.memberUids, 20) &&
+        isBoundedStringList(data.invitedEmails, 20) &&
+        isBoundedStringList(data.deletedIds, 500) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    // =========================================================================
+    // WORKSPACE MASTER GATE & LIST AUTHORIZATION HELPERS
+    // =========================================================================
+    function isWorkspaceMember(workspaceId) {
+      let ws = get(/databases/$(database)/documents/workspaces/$(workspaceId)).data;
+      return isEmailVerified() && (
+        isAdmin() ||
+        ws.ownerUid == request.auth.uid ||
+        request.auth.uid in ws.memberUids ||
+        (normalizedEmail() != '' && normalizedEmail() in ws.invitedEmails)
+      );
+    }
+
+    function isWorkspaceAdminOrOwner(workspaceId) {
+      let ws = get(/databases/$(database)/documents/workspaces/$(workspaceId)).data;
+      return isEmailVerified() && (
+        isAdmin() ||
+        ws.ownerUid == request.auth.uid
+      );
+    }
+
+    // Zero-get() list guard checking resource.data directly (Pillar 8 Cost-Optimization)
+    function canListWorkspaceRecord() {
+      return isEmailVerified() && (
+        isBootstrappedAdmin() ||
+        existing().ownerUid == request.auth.uid ||
+        (existing().memberUids is list && request.auth.uid in existing().memberUids) ||
+        (normalizedEmail() != '' && existing().invitedEmails is list && normalizedEmail() in existing().invitedEmails)
+      );
+    }
+
+    function canCreateWorkspaceRecord(workspaceId) {
+      let ws = get(/databases/$(database)/documents/workspaces/$(workspaceId)).data;
+      return isEmailVerified() &&
+        isWorkspaceMember(workspaceId) &&
+        incoming().createdByUid == request.auth.uid &&
+        incoming().ownerUid == ws.ownerUid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+    }
+
+    function canUpdateWorkspaceEntity(workspaceId) {
+      return isEmailVerified() &&
+        incoming().id == existing().id &&
+        incoming().workspaceId == existing().workspaceId &&
+        incoming().ownerUid == existing().ownerUid &&
+        incoming().createdByUid == existing().createdByUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        isWorkspaceMember(workspaceId) &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['title', 'status', 'isDeleted', 'recordData', 'memberUids', 'invitedEmails', 'updatedAt']);
+    }
+
+    function isNonTerminalEntityStatus() {
+      return existing().status != 'ORDER_CLOSED' &&
+        existing().status != 'CANCELLED' &&
+        existing().status != 'ACCEPTED' &&
+        existing().status != 'REJECTED' &&
+        existing().status != 'DELIVERED';
+    }
+
+    // =========================================================================
+    // SYSTEM CONNECTIVITY PROBE (/test/connection)
+    // =========================================================================
+    match /test/{docId} {
+      allow get: if isSignedIn() && docId == 'connection';
+      allow list, write: if false;
+    }
+
+    // =========================================================================
+    // TRUSTED ADMIN REGISTRY (/admins/{userId})
+    // =========================================================================
+    match /admins/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isBootstrappedAdmin() || (isEmailVerified() && existing().uid == request.auth.uid);
+      allow create: if isBootstrappedAdmin() &&
+        isValidId(userId) &&
+        isValidAdminRecord(incoming(), userId) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isBootstrappedAdmin() &&
+        isValidId(userId) &&
+        isValidAdminRecord(incoming(), userId) &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['email', 'grantedBy', 'updatedAt']);
+      allow delete: if isBootstrappedAdmin() && isValidId(userId) && userId != request.auth.uid;
+    }
+
+    // =========================================================================
+    // PII-ISOLATED USER PROFILES (/users/{userId} & /users/{userId}/private/{infoId})
+    // =========================================================================
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isBootstrappedAdmin() || (isEmailVerified() && existing().uid == request.auth.uid);
+      allow create: if isOwner(userId) &&
+        isValidId(userId) &&
+        isValidUserPublicProfile(incoming(), userId) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(userId) &&
+        isValidUserPublicProfile(incoming(), userId) &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          (isOwner(userId) && incoming().role == existing().role && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'updatedAt'])) ||
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'role', 'updatedAt']))
+        );
+      allow delete: if isAdmin() && isValidId(userId);
+
+      match /private/{infoId} {
+        allow get: if isValidId(userId) && isValidId(infoId) && (isOwner(userId) || isAdmin());
+        allow list: if isBootstrappedAdmin() || (isEmailVerified() && existing().uid == request.auth.uid);
+        allow create: if isOwner(userId) &&
+          isValidId(userId) &&
+          isValidId(infoId) &&
+          isValidUserPrivateInfo(incoming(), userId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time;
+        allow update: if isValidId(userId) &&
+          isValidId(infoId) &&
+          isValidUserPrivateInfo(incoming(), userId) &&
+          incoming().uid == existing().uid &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          (isOwner(userId) || isAdmin()) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['email', 'mobile', 'updatedAt']);
+        allow delete: if isAdmin() && isValidId(userId) && isValidId(infoId);
+      }
+    }
+
+    // =========================================================================
+    // WORKSPACE ROOT & SHARED ERP COLLECTIONS (/workspaces/{workspaceId})
+    // =========================================================================
+    match /workspaces/{workspaceId} {
+      allow get: if isValidId(workspaceId) && isEmailVerified() && (
+        isAdmin() ||
+        (resource != null && (
+          existing().ownerUid == request.auth.uid ||
+          request.auth.uid in existing().memberUids ||
+          (normalizedEmail() != '' && normalizedEmail() in existing().invitedEmails)
+        ))
+      );
+      allow list: if isEmailVerified() && (
+        isBootstrappedAdmin() ||
+        existing().ownerUid == request.auth.uid ||
+        (existing().memberUids is list && request.auth.uid in existing().memberUids) ||
+        (normalizedEmail() != '' && existing().invitedEmails is list && normalizedEmail() in existing().invitedEmails)
+      );
+      allow create: if isAdmin() &&
+        isValidId(workspaceId) &&
+        isValidWorkspace(incoming(), workspaceId) &&
+        incoming().ownerUid == request.auth.uid &&
+        request.auth.uid in incoming().memberUids &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isEmailVerified() &&
+        isValidId(workspaceId) &&
+        isValidWorkspace(incoming(), workspaceId) &&
+        incoming().id == existing().id &&
+        incoming().ownerUid == existing().ownerUid &&
+        incoming().ownerEmail == existing().ownerEmail &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          // Tier 1: Admin or Workspace Owner
+          ((isAdmin() || existing().ownerUid == request.auth.uid) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['companyName', 'memberUids', 'invitedEmails', 'updatedAt'])) ||
+          // Tier 2: Invited teammate claiming membership atomically with member doc
+          (normalizedEmail() != '' &&
+            normalizedEmail() in existing().invitedEmails &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'updatedAt']) &&
+            incoming().memberUids.hasAll(existing().memberUids) &&
+            incoming().memberUids.size() <= existing().memberUids.size() + 1 &&
+            request.auth.uid in incoming().memberUids &&
+            existsAfter(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(request.auth.uid)))
+        );
+      allow delete: if isAdmin() && isValidId(workspaceId);
+
+      // Workspace Members
+      match /members/{memberId} {
+        allow get: if isValidId(workspaceId) && isValidId(memberId) && isWorkspaceMember(workspaceId);
+        allow list: if isBootstrappedAdmin() || (isEmailVerified() && existing().uid == request.auth.uid);
+        allow create: if isEmailVerified() &&
+          isValidId(workspaceId) &&
+          isValidId(memberId) &&
+          isValidWorkspaceMember(incoming(), memberId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time && (
+            isWorkspaceAdminOrOwner(workspaceId) ||
+            (memberId == request.auth.uid &&
+              normalizedEmail() != '' &&
+              normalizedEmail() in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.invitedEmails &&
+              getAfter(/databases/$(database)/documents/workspaces/$(workspaceId)).data.memberUids.hasAll([request.auth.uid]))
+          );
+        allow update: if isEmailVerified() &&
+          isValidId(workspaceId) &&
+          isValidId(memberId) &&
+          isValidWorkspaceMember(incoming(), memberId) &&
+          incoming().uid == existing().uid &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time && (
+            (isWorkspaceAdminOrOwner(workspaceId) &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['email', 'displayName', 'erpRole', 'status', 'updatedAt'])) ||
+            (isOwner(memberId) &&
+              isWorkspaceMember(workspaceId) &&
+              incoming().erpRole == existing().erpRole &&
+              incoming().status == existing().status &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'updatedAt']))
+          );
+        allow delete: if isValidId(workspaceId) && isValidId(memberId) && isWorkspaceAdminOrOwner(workspaceId);
+      }
+
+      // Workspace Invites
+      match /invites/{inviteId} {
+        allow get: if isValidId(workspaceId) && isValidId(inviteId) && isWorkspaceMember(workspaceId);
+        allow list: if isBootstrappedAdmin() || (isEmailVerified() && normalizedEmail() != '' && existing().email == normalizedEmail());
+        allow create: if isEmailVerified() &&
+          isValidId(workspaceId) &&
+          isValidId(inviteId) &&
+          isValidWorkspaceInvite(incoming(), inviteId) &&
+          incoming().invitedByUid == request.auth.uid &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          isWorkspaceAdminOrOwner(workspaceId);
+        allow update: if isEmailVerified() &&
+          isValidId(workspaceId) &&
+          isValidId(inviteId) &&
+          isValidWorkspaceInvite(incoming(), inviteId) &&
+          incoming().id == existing().id &&
+          incoming().invitedByUid == existing().invitedByUid &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time && (
+            (isWorkspaceAdminOrOwner(workspaceId) &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['email', 'displayName', 'erpRole', 'status', 'updatedAt'])) ||
+            (normalizedEmail() != '' &&
+              normalizedEmail() == existing().email &&
+              incoming().status == 'JOINED' &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+          );
+        allow delete: if isValidId(workspaceId) && isValidId(inviteId) && isWorkspaceAdminOrOwner(workspaceId);
+      }
+
+      // Vendors
+      match /vendors/{vendorId} {
+        allow get: if isValidId(workspaceId) && isValidId(vendorId) && isWorkspaceMember(workspaceId);
+        allow list: if canListWorkspaceRecord();
+        allow create: if isValidId(workspaceId) && isValidId(vendorId) &&
+          isValidVendorDoc(incoming(), workspaceId, vendorId) &&
+          canCreateWorkspaceRecord(workspaceId);
+        allow update: if isValidId(workspaceId) && isValidId(vendorId) &&
+          isValidVendorDoc(incoming(), workspaceId, vendorId) &&
+          isEmailVerified() &&
+          incoming().id == existing().id &&
+          incoming().workspaceId == existing().workspaceId &&
+          incoming().ownerUid == existing().ownerUid &&
+          incoming().createdByUid == existing().createdByUid &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          isWorkspaceMember(workspaceId) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['companyName', 'status', 'isDeleted', 'recordData', 'memberUids', 'invitedEmails', 'updatedAt']);
+        allow delete: if isValidId(workspaceId) && isValidId(vendorId) && isWorkspaceMember(workspaceId);
+      }
+
+      // Customers
+      match /customers/{customerId} {
+        allow get: if isValidId(workspaceId) && isValidId(customerId) && isWorkspaceMember(workspaceId);
+        allow list: if canListWorkspaceRecord();
+        allow create: if isValidId(workspaceId) && isValidId(customerId) &&
+          isValidEntityRecord(incoming(), workspaceId, customerId) &&
+          canCreateWorkspaceRecord(workspaceId);
+        allow update: if isValidId(workspaceId) && isValidId(customerId) &&
+          isValidEntityRecord(incoming(), workspaceId, customerId) &&
+          canUpdateWorkspaceEntity(workspaceId);
+        allow delete: if isValidId(workspaceId) && isValidId(customerId) && isWorkspaceMember(workspaceId);
+      }
+
+      // Companies
+      match /companies/{companyId} {
+        allow get: if isValidId(workspaceId) && isValidId(companyId) && isWorkspaceMember(workspaceId);
+        allow list: if canListWorkspaceRecord();
+        allow create: if isValidId(workspaceId) && isValidId(companyId) &&
+          isValidEntityRecord(incoming(), workspaceId, companyId) &&
+          canCreateWorkspaceRecord(workspaceId);
+        allow update: if isValidId(workspaceId) && isValidId(companyId) &&
+          isValidEntityRecord(incoming(), workspaceId, companyId) &&
+          canUpdateWorkspaceEntity(workspaceId);
+        allow delete: if isValidId(workspaceId) && isValidId(companyId) && isWorkspaceMember(workspaceId);
+      }
+
+      // Purchase Executives
+      match /purchaseExecutives/{execId} {
+        allow get: if isValidId(workspaceId) && isValidId(execId) && isWorkspaceMember(workspaceId);
+        allow list: if canListWorkspaceRecord();
+        allow create: if isValidId(workspaceId) && isValidId(execId) &&
+          isValidEntityRecord(incoming(), workspaceId, execId) &&
+          canCreateWorkspaceRecord(workspaceId);
+        allow update: if isValidId(workspaceId) && isValidId(execId) &&
+          isValidEntityRecord(incoming(), workspaceId, execId) &&
+          canUpdateWorkspaceEntity(workspaceId);
+        allow delete: if isValidId(workspaceId) && isValidId(execId) && isWorkspaceMember(workspaceId);
+      }
+
+      // Products
+      match /products/{productId} {
+        allow get: if isValidId(workspaceId) && isValidId(productId) && isWorkspaceMember(workspaceId);
+        allow list: if canListWorkspaceRecord();
+        allow create: if isValidId(workspaceId) && isValidId(productId) &&
+          isValidEntityRecord(incoming(), workspaceId, productId) &&
+          canCreateWorkspaceRecord(workspaceId);
+        allow update: if isValidId(workspaceId) && isValidId(productId) &&
+          isValidEntityRecord(incoming(), workspaceId, productId) &&
+          canUpdateWorkspaceEntity(workspaceId);
+        allow delete: if isValidId(workspaceId) && isValidId(productId) && isWorkspaceMember(workspaceId);
+      }
+
+      // Brands
+      match /brands/{brandId} {
+        allow get: if isValidId(workspaceId) && isValidId(brandId) && isWorkspaceMember(workspaceId);
+        allow list: if canListWorkspaceRecord();
+        allow create: if isValidId(workspaceId) && isValidId(brandId) &&
+          isValidEntityRecord(incoming(), workspaceId, brandId) &&
+          canCreateWorkspaceRecord(workspaceId);
+        allow update: if isValidId(workspaceId) && isValidId(brandId) &&
+          isValidEntityRecord(incoming(), workspaceId, brandId) &&
+          canUpdateWorkspaceEntity(workspaceId);
+        allow delete: if isValidId(workspaceId) && isValidId(brandId) && isWorkspaceMember(workspaceId);
+      }
+
+      // Categories
+      match /categories/{categoryId} {
+        allow get: if isValidId(workspaceId) && isValidId(categoryId) && isWorkspaceMember(workspaceId);
+        allow list: if canListWorkspaceRecord();
+        allow create: if isValidId(workspaceId) && isValidId(categoryId) &&
+          isValidEntityRecord(incoming(), workspaceId, categoryId) &&
+          canCreateWorkspaceRecord(workspaceId);
+        allow update: if isValidId(workspaceId) && isValidId(categoryId) &&
+          isValidEntityRecord(incoming(), workspaceId, categoryId) &&
+          canUpdateWorkspaceEntity(workspaceId);
+        allow delete: if isValidId(workspaceId) && isValidId(categoryId) && isWorkspaceMember(workspaceId);
+      }
+
+      // Product Types
+      match /productTypes/{productTypeId} {
+        allow get: if isValidId(workspaceId) && isValidId(productTypeId) && isWorkspaceMember(workspaceId);
+        allow list: if canListWorkspaceRecord();
+        allow create: if isValidId(workspaceId) && isValidId(productTypeId) &&
+          isValidEntityRecord(incoming(), workspaceId, productTypeId) &&
+          canCreateWorkspaceRecord(workspaceId);
+        allow update: if isValidId(workspaceId) && isValidId(productTypeId) &&
+          isValidEntityRecord(incoming(), workspaceId, productTypeId) &&
+          canUpdateWorkspaceEntity(workspaceId);
+        allow delete: if isValidId(workspaceId) && isValidId(productTypeId) && isWorkspaceMember(workspaceId);
+      }
+
+      // Vendor Product Mappings
+      match /vendorProductMappings/{mappingId} {
+        allow get: if isValidId(workspaceId) && isValidId(mappingId) && isWorkspaceMember(workspaceId);
+        allow list: if canListWorkspaceRecord();
+        allow create: if isValidId(workspaceId) && isValidId(mappingId) &&
+          isValidEntityRecord(incoming(), workspaceId, mappingId) &&
+          canCreateWorkspaceRecord(workspaceId);
+        allow update: if isValidId(workspaceId) && isValidId(mappingId) &&
+          isValidEntityRecord(incoming(), workspaceId, mappingId) &&
+          canUpdateWorkspaceEntity(workspaceId);
+        allow delete: if isValidId(workspaceId) && isValidId(mappingId) && isWorkspaceMember(workspaceId);
+      }
+
+      // Requirements (with Terminal State Locking)
+      match /requirements/{requirementId} {
+        allow get: if isValidId(workspaceId) && isValidId(requirementId) && isWorkspaceMember(workspaceId);
+        allow list: if canListWorkspaceRecord();
+        allow create: if isValidId(workspaceId) && isValidId(requirementId) &&
+          isValidEntityRecord(incoming(), workspaceId, requirementId) &&
+          canCreateWorkspaceRecord(workspaceId);
+        allow update: if isValidId(workspaceId) && isValidId(requirementId) &&
+          isValidEntityRecord(incoming(), workspaceId, requirementId) &&
+          canUpdateWorkspaceEntity(workspaceId) &&
+          (isAdmin() || isNonTerminalEntityStatus());
+        allow delete: if isValidId(workspaceId) && isValidId(requirementId) && isWorkspaceMember(workspaceId);
+      }
+
+      // Vendor Quotes (Stage 2)
+      match /vendorQuotes/{quoteId} {
+        allow get: if isValidId(workspaceId) && isValidId(quoteId) && isWorkspaceMember(workspaceId);
+        allow list: if canListWorkspaceRecord();
+        allow create: if isValidId(workspaceId) && isValidId(quoteId) &&
+          isValidEntityRecord(incoming(), workspaceId, quoteId) &&
+          canCreateWorkspaceRecord(workspaceId);
+        allow update: if isValidId(workspaceId) && isValidId(quoteId) &&
+          isValidEntityRecord(incoming(), workspaceId, quoteId) &&
+          canUpdateWorkspaceEntity(workspaceId);
+        allow delete: if isValidId(workspaceId) && isValidId(quoteId) && isWorkspaceMember(workspaceId);
+      }
+
+      // Quotations (Stage 4, with Terminal State Locking)
+      match /quotations/{quotationId} {
+        allow get: if isValidId(workspaceId) && isValidId(quotationId) && isWorkspaceMember(workspaceId);
+        allow list: if canListWorkspaceRecord();
+        allow create: if isValidId(workspaceId) && isValidId(quotationId) &&
+          isValidEntityRecord(incoming(), workspaceId, quotationId) &&
+          canCreateWorkspaceRecord(workspaceId);
+        allow update: if isValidId(workspaceId) && isValidId(quotationId) &&
+          isValidEntityRecord(incoming(), workspaceId, quotationId) &&
+          canUpdateWorkspaceEntity(workspaceId) &&
+          (isAdmin() || isNonTerminalEntityStatus());
+        allow delete: if isValidId(workspaceId) && isValidId(quotationId) && isWorkspaceMember(workspaceId);
+      }
+
+      // Customer POs (Stage 5)
+      match /customerPos/{cpoId} {
+        allow get: if isValidId(workspaceId) && isValidId(cpoId) && isWorkspaceMember(workspaceId);
+        allow list: if canListWorkspaceRecord();
+        allow create: if isValidId(workspaceId) && isValidId(cpoId) &&
+          isValidEntityRecord(incoming(), workspaceId, cpoId) &&
+          canCreateWorkspaceRecord(workspaceId);
+        allow update: if isValidId(workspaceId) && isValidId(cpoId) &&
+          isValidEntityRecord(incoming(), workspaceId, cpoId) &&
+          canUpdateWorkspaceEntity(workspaceId);
+        allow delete: if isValidId(workspaceId) && isValidId(cpoId) && isWorkspaceMember(workspaceId);
+      }
+
+      // Vendor POs (Stage 6)
+      match /vendorPos/{vpoId} {
+        allow get: if isValidId(workspaceId) && isValidId(vpoId) && isWorkspaceMember(workspaceId);
+        allow list: if canListWorkspaceRecord();
+        allow create: if isValidId(workspaceId) && isValidId(vpoId) &&
+          isValidEntityRecord(incoming(), workspaceId, vpoId) &&
+          canCreateWorkspaceRecord(workspaceId);
+        allow update: if isValidId(workspaceId) && isValidId(vpoId) &&
+          isValidEntityRecord(incoming(), workspaceId, vpoId) &&
+          canUpdateWorkspaceEntity(workspaceId);
+        allow delete: if isValidId(workspaceId) && isValidId(vpoId) && isWorkspaceMember(workspaceId);
+      }
+
+      // Proforma Invoices (Stage 7)
+      match /proformaInvoices/{piId} {
+        allow get: if isValidId(workspaceId) && isValidId(piId) && isWorkspaceMember(workspaceId);
+        allow list: if canListWorkspaceRecord();
+        allow create: if isValidId(workspaceId) && isValidId(piId) &&
+          isValidEntityRecord(incoming(), workspaceId, piId) &&
+          canCreateWorkspaceRecord(workspaceId);
+        allow update: if isValidId(workspaceId) && isValidId(piId) &&
+          isValidEntityRecord(incoming(), workspaceId, piId) &&
+          canUpdateWorkspaceEntity(workspaceId);
+        allow delete: if isValidId(workspaceId) && isValidId(piId) && isWorkspaceMember(workspaceId);
+      }
+
+      // Payments (Stage 8)
+      match /payments/{paymentId} {
+        allow get: if isValidId(workspaceId) && isValidId(paymentId) && isWorkspaceMember(workspaceId);
+        allow list: if canListWorkspaceRecord();
+        allow create: if isValidId(workspaceId) && isValidId(paymentId) &&
+          isValidEntityRecord(incoming(), workspaceId, paymentId) &&
+          canCreateWorkspaceRecord(workspaceId);
+        allow update: if isValidId(workspaceId) && isValidId(paymentId) &&
+          isValidEntityRecord(incoming(), workspaceId, paymentId) &&
+          canUpdateWorkspaceEntity(workspaceId);
+        allow delete: if isValidId(workspaceId) && isValidId(paymentId) && isWorkspaceMember(workspaceId);
+      }
+
+      // Dispatches (Stage 9)
+      match /dispatches/{dispatchId} {
+        allow get: if isValidId(workspaceId) && isValidId(dispatchId) && isWorkspaceMember(workspaceId);
+        allow list: if canListWorkspaceRecord();
+        allow create: if isValidId(workspaceId) && isValidId(dispatchId) &&
+          isValidEntityRecord(incoming(), workspaceId, dispatchId) &&
+          canCreateWorkspaceRecord(workspaceId);
+        allow update: if isValidId(workspaceId) && isValidId(dispatchId) &&
+          isValidEntityRecord(incoming(), workspaceId, dispatchId) &&
+          canUpdateWorkspaceEntity(workspaceId);
+        allow delete: if isValidId(workspaceId) && isValidId(dispatchId) && isWorkspaceMember(workspaceId);
+      }
+
+      // Deliveries (Stage 10, with Terminal State Locking)
+      match /deliveries/{deliveryId} {
+        allow get: if isValidId(workspaceId) && isValidId(deliveryId) && isWorkspaceMember(workspaceId);
+        allow list: if canListWorkspaceRecord();
+        allow create: if isValidId(workspaceId) && isValidId(deliveryId) &&
+          isValidEntityRecord(incoming(), workspaceId, deliveryId) &&
+          canCreateWorkspaceRecord(workspaceId);
+        allow update: if isValidId(workspaceId) && isValidId(deliveryId) &&
+          isValidEntityRecord(incoming(), workspaceId, deliveryId) &&
+          canUpdateWorkspaceEntity(workspaceId) &&
+          (isAdmin() || isNonTerminalEntityStatus());
+        allow delete: if isValidId(workspaceId) && isValidId(deliveryId) && isWorkspaceMember(workspaceId);
+      }
+
+      // Deletion Tombstones
+      match /tombstones/{tombstoneId} {
+        allow get: if isValidId(workspaceId) && isValidId(tombstoneId) && isWorkspaceMember(workspaceId);
+        allow list: if canListWorkspaceRecord();
+        allow create: if isValidId(workspaceId) && isValidId(tombstoneId) &&
+          isValidTombstoneDoc(incoming(), workspaceId, tombstoneId) &&
+          canCreateWorkspaceRecord(workspaceId);
+        allow update: if isValidId(workspaceId) && isValidId(tombstoneId) &&
+          isValidTombstoneDoc(incoming(), workspaceId, tombstoneId) &&
+          isEmailVerified() &&
+          incoming().id == existing().id &&
+          incoming().workspaceId == existing().workspaceId &&
+          incoming().ownerUid == existing().ownerUid &&
+          incoming().createdByUid == existing().createdByUid &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          isWorkspaceMember(workspaceId) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['deletedIds', 'memberUids', 'invitedEmails', 'updatedAt']);
+        allow delete: if isValidId(workspaceId) && isValidId(tombstoneId) && isWorkspaceAdminOrOwner(workspaceId);
+      }
+
+      // Workspace Settings (Branding, Theme, Accounting)
+      match /settings/{settingId} {
+        allow get: if isValidId(workspaceId) && isValidId(settingId) && isWorkspaceMember(workspaceId);
+        allow list: if canListWorkspaceRecord();
+        allow create: if isValidId(workspaceId) && isValidId(settingId) &&
+          isValidEntityRecord(incoming(), workspaceId, settingId) &&
+          canCreateWorkspaceRecord(workspaceId);
+        allow update: if isValidId(workspaceId) && isValidId(settingId) &&
+          isValidEntityRecord(incoming(), workspaceId, settingId) &&
+          canUpdateWorkspaceEntity(workspaceId);
+        allow delete: if isValidId(workspaceId) && isValidId(settingId) && isWorkspaceAdminOrOwner(workspaceId);
+      }
+
+      // Immutable Audit Logs
+      match /auditLogs/{logId} {
+        allow get: if isValidId(workspaceId) && isValidId(logId) && isWorkspaceMember(workspaceId);
+        allow list: if canListWorkspaceRecord();
+        allow create: if isValidId(workspaceId) && isValidId(logId) &&
+          isValidEntityRecord(incoming(), workspaceId, logId) &&
+          canCreateWorkspaceRecord(workspaceId);
+        allow update: if false;
+        allow delete: if isValidId(workspaceId) && isValidId(logId) && isAdmin();
+      }
+    }
+  }
+}

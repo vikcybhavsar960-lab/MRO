@@ -1,0 +1,2091 @@
+# MRO PROCUREMENT SOLUTION
+## MASTER PROMPT — COMPLETE VENDOR AUTOMATION, CATALOGUE IMPORT, WEBSITE ANALYSIS & PRODUCT INTELLIGENCE
+
+I have an existing **MRO PROCUREMENT SOLUTION ERP**.
+
+Do NOT rebuild the ERP from scratch.
+
+First inspect the existing application, database, APIs, Vendor Master, Brand Master, Category Master, Product Master, Vendor Product Mapping, Catalogue Import, AI analysis, authentication and existing workflows.
+
+Then implement the following complete **Vendor Automation System**.
+
+The objective is to reduce manual vendor data entry and procurement manpower as much as possible.
+
+---
+
+# 1. MAIN OBJECTIVE
+
+When I add a new Vendor, I should NOT have to manually enter all vendor information and manually create every brand/product/category.
+
+The ERP should intelligently collect and structure vendor information from:
+
+1. Vendor website URL
+2. Vendor PDF catalogue
+3. Vendor Excel/CSV catalogue
+4. Vendor JPG/JPEG/PNG/WEBP catalogue/images
+5. Product brochures
+6. Product datasheets
+7. Public product pages
+8. Public brand pages
+9. Other uploaded vendor documents
+
+The system should automatically identify and populate:
+
+### Vendor information
+
+- Company / OEM Partner Name
+- Legal / Registered Entity Name
+- Vendor Type
+- Website
+- Contact Person
+- Email
+- Mobile / Primary Phone
+- Alternate Phone
+- Address
+- City
+- State
+- Country
+- PIN Code
+- GSTIN
+- PAN
+- MSME / Udyam
+- Other available business details
+
+### Vendor business intelligence
+
+- Brands dealt with
+- Product categories
+- Product subcategories
+- Product families
+- Actual products
+- Part Codes
+- Manufacturer Codes
+- Model Numbers
+- Technical specifications
+- Applications
+- UOM
+- Catalogue MRP
+- Purchase Rate
+- Discount
+- Supplier/Vendor mapping
+
+---
+
+# 2. VENDOR ADD SCREEN — AUTOMATIC MODE
+
+Existing Vendor Add screen contains fields such as:
+
+- Company / OEM Partner Name
+- Legal / Registered Entity Name
+- Vendor Type
+- Official Website URL
+- Country
+- Key Contact Person
+- Email
+- Mobile
+- Alternate Mobile
+- Company Address
+- City
+- State
+- PIN Code
+- GST
+- PAN
+- MSME
+- Brands
+- Categories
+- Products
+
+Keep the existing form.
+
+Add:
+
+## "AI Auto-Fill Vendor" / "Analyse Vendor"
+
+workflow.
+
+User should be able to enter only:
+
+```text
+Company Name
++
+Website URL
+```
+
+or:
+
+```text
+Company Name
++
+Upload Catalogue
+```
+
+or:
+
+```text
+Website URL
++
+Upload Catalogue
+```
+
+Then ERP automatically analyses the available information.
+
+---
+
+# 3. AUTOMATIC VENDOR ONBOARDING WORKFLOW
+
+Use:
+
+```text
+Vendor Name / Website / Catalogue
+        ↓
+Fetch / Upload
+        ↓
+Extract Content
+        ↓
+Clean Content
+        ↓
+Classify Content
+        ↓
+Identify Company
+        ↓
+Identify Contact Information
+        ↓
+Identify Brands
+        ↓
+Identify Categories
+        ↓
+Identify Product Families
+        ↓
+Identify Actual Products
+        ↓
+Identify Part Codes / Models
+        ↓
+Identify Specifications
+        ↓
+Duplicate Check
+        ↓
+Confidence & Quality Check
+        ↓
+Auto-fill Vendor Form
+        ↓
+Show Missing / Uncertain Fields
+        ↓
+User Confirms
+        ↓
+Save to Database
+```
+
+---
+
+# 4. VERY IMPORTANT — DO NOT TRUST ALL WEBSITE TEXT
+
+The current system has a serious problem.
+
+It may read website text such as:
+
+```text
+Developed and Managed by IndiaMART InterMESH Limited
+```
+
+and incorrectly treat it as a vendor/product.
+
+This MUST be fixed.
+
+The system must understand that website content has different types.
+
+---
+
+# 5. CONTENT CLASSIFICATION ENGINE
+
+Every extracted text block must first be classified.
+
+Allowed classifications:
+
+```text
+COMPANY
+LEGAL_ENTITY
+BRAND
+PRODUCT
+PRODUCT_FAMILY
+CATEGORY
+SUBCATEGORY
+PART_CODE
+MODEL
+SPECIFICATION
+APPLICATION
+CONTACT
+ADDRESS
+EMAIL
+PHONE
+GST
+PAN
+MSME
+WEBSITE
+MARKETING
+TAGLINE
+NAVIGATION
+FOOTER
+LEGAL
+PLATFORM_ATTRIBUTION
+UNKNOWN
+```
+
+Only validated `PRODUCT` records may enter Product Master.
+
+---
+
+# 6. NEVER CREATE PRODUCTS FROM RANDOM WEBSITE TEXT
+
+The system must NOT create a product from:
+
+- Company address
+- Phone number
+- Email
+- GST
+- PAN
+- MSME
+- Company description
+- Tagline
+- Marketing sentence
+- Copyright
+- Footer
+- Navigation
+- Contact Us
+- About Us
+- Services
+- Industries
+- Careers
+- Privacy Policy
+- Terms & Conditions
+- "Developed and Managed by..."
+- IndiaMART attribution
+- Website developer information
+- Social media links
+
+Example:
+
+```text
+Developed and Managed by IndiaMART InterMESH Limited
+```
+
+must be classified as:
+
+```text
+PLATFORM_ATTRIBUTION
+```
+
+NOT:
+
+```text
+PRODUCT
+```
+
+NOT:
+
+```text
+BRAND
+```
+
+NOT:
+
+```text
+VENDOR
+```
+
+unless independent evidence proves otherwise.
+
+---
+
+# 7. ADDRESS PROTECTION
+
+If website contains:
+
+```text
+Plot No...
+Industrial Estate...
+Ahmedabad...
+Gujarat...
+India...
+```
+
+store it as:
+
+```text
+Vendor Address
+```
+
+Never create a product from it.
+
+---
+
+# 8. TAGLINE PROTECTION
+
+If website contains:
+
+```text
+Your Trusted Engineering Partner
+Quality Engineering Solutions
+Leading Industrial Supplier
+```
+
+classify as:
+
+```text
+MARKETING / TAGLINE
+```
+
+Never create a product.
+
+---
+
+# 9. COMPANY DESCRIPTION PROTECTION
+
+Example:
+
+```text
+We are a leading supplier of industrial automation and electrical products...
+```
+
+This can help identify:
+
+```text
+Business Areas
+Industries Served
+Product Categories
+```
+
+but must NOT automatically become a product.
+
+---
+
+# 10. COMPANY IDENTITY DETECTION
+
+Identify the actual vendor/company using evidence from:
+
+- Website title
+- Logo
+- Header
+- About Us
+- Contact page
+- Legal/company information
+- GST information
+- Catalogue
+- Product pages
+- Company profile
+
+Do NOT use website platform/developer attribution as company identity.
+
+For example, if a website is hosted/managed through IndiaMART, do not automatically identify:
+
+```text
+IndiaMART InterMESH Limited
+```
+
+as the vendor.
+
+---
+
+# 11. BRAND IDENTIFICATION
+
+Automatically identify brands the vendor deals with.
+
+Use evidence from:
+
+- Brand pages
+- Product pages
+- Catalogue
+- Product descriptions
+- Manufacturer information
+- Brand logos
+- Product codes
+- Datasheets
+- Official documentation
+
+Store:
+
+```text
+Vendor
+    ↓
+Brand
+    ↓
+Category
+    ↓
+Product
+```
+
+Example:
+
+```text
+Vendor:
+ABC Industrial
+
+Brands:
+SKF
+Siemens
+Schneider Electric
+
+Categories:
+Bearings
+Automation
+Electrical
+```
+
+---
+
+# 12. PRODUCT CATEGORY IDENTIFICATION
+
+Automatically identify categories such as:
+
+```text
+Electrical
+Electronics
+Automation
+PLC / HMI
+Instrumentation
+Sensors
+Industrial Motors
+Pumps
+Valves
+Pneumatic
+Hydraulic
+Mechanical Spare Parts
+Bearings
+Belts & Power Transmission
+Fasteners
+Lubricants & Grease
+HVAC
+Safety Products
+Welding & Cutting
+Tools & Hardware
+Industrial Chemicals
+Laboratory Equipment
+Compressor Parts
+Conveyor Components
+Fuses & Protection Devices
+Cables & Wires
+Switchgear
+Filters
+Seals / O-Rings
+Gaskets
+Fabrication Materials
+Other
+```
+
+Use the existing ERP Category Master where possible.
+
+Do not create unnecessary duplicate categories.
+
+---
+
+# 13. CATEGORY ≠ PRODUCT
+
+This is critical.
+
+Wrong:
+
+```text
+Category:
+Automation
+
+Product:
+Automation
+```
+
+Correct:
+
+```text
+Category:
+Automation
+
+Product Family:
+PLC
+
+Product:
+SIMATIC S7-1200
+
+Part Code:
+[actual code]
+```
+
+Similarly:
+
+```text
+Category:
+Electrical
+
+Product Family:
+MCB
+
+Product:
+Acti9 iC60N
+
+Part Code:
+[actual code]
+```
+
+---
+
+# 14. PRODUCT FAMILY IDENTIFICATION
+
+Separate:
+
+```text
+Category
+↓
+Subcategory
+↓
+Product Family
+↓
+Actual Product
+↓
+Part Code / Model
+```
+
+Example:
+
+```text
+Category:
+Automation
+
+Subcategory:
+Sensors
+
+Product Family:
+Inductive Proximity Sensor
+
+Product:
+E2E-X5ME1
+
+Brand:
+OMRON
+```
+
+---
+
+# 15. ACTUAL PRODUCT IDENTIFICATION — MOST IMPORTANT
+
+The ERP must identify the **actual sellable/usable product**.
+
+Do NOT generate generic AI product names.
+
+Wrong:
+
+```text
+Industrial Equipment
+Automation Product
+Electrical Item
+Bearing Product
+Sensor Device
+Industrial Spare
+```
+
+These are not reliable product identities.
+
+The actual product name/designation must come from the source catalogue or product page.
+
+---
+
+# 16. PRODUCT IDENTITY PRIORITY
+
+Use this priority:
+
+```text
+Exact Manufacturer Part Code / Model Number
+        ↓
+Exact Product Designation
+        ↓
+Official Product Name
+        ↓
+Catalogue Description
+        ↓
+Technical Specification
+```
+
+Never replace the manufacturer's actual designation with an invented AI name.
+
+---
+
+# 17. PART CODE IS THE PRIMARY PRODUCT IDENTITY
+
+For MRO products, part code/model/designation is extremely important.
+
+Examples:
+
+```text
+6006
+6006/C3
+6006-2RS1
+6006-2Z
+6006/C4
+```
+
+Do NOT assume these are the same product.
+
+Preserve meaningful:
+
+- Prefixes
+- Suffixes
+- Hyphens
+- Slashes
+- Size codes
+- Voltage codes
+- Temperature codes
+- Clearance codes
+- Seal codes
+- Revision codes
+- Mounting codes
+- Material codes
+
+---
+
+# 18. SEPARATE PRODUCT DATA FIELDS
+
+Do not put everything into Product Name.
+
+Maintain:
+
+```text
+Brand
+Source Product Name
+Normalized Product Name
+Product Designation
+Product Family
+Category
+Subcategory
+Part Code
+Manufacturer Part Number
+Model Number
+Description
+Technical Specifications
+Application
+UOM
+MRP
+Purchase Rate
+Discount
+Source URL
+Catalogue File
+Catalogue Page
+Confidence
+```
+
+---
+
+# 19. SOURCE PRODUCT NAME VS NORMALIZED PRODUCT NAME
+
+Store BOTH.
+
+### Source Product Name
+
+Exact wording found in catalogue/website.
+
+### Normalized Product Name
+
+ERP-friendly standardized product family/name.
+
+Example:
+
+```text
+Source Product Name:
+E2E-X5ME1
+
+Normalized Product Name:
+Inductive Proximity Sensor
+
+Part Code:
+E2E-X5ME1
+
+Brand:
+OMRON
+```
+
+The normalized name must never replace the original source identity.
+
+---
+
+# 20. NEVER INVENT PRODUCT NAMES
+
+AI may use its knowledge for:
+
+- Classification
+- Category
+- Product Family
+- Specification interpretation
+- Matching
+
+But it must NOT invent:
+
+- Part Number
+- Manufacturer Product Name
+- MRP
+- Brand
+- Model
+- Supplier
+- Product designation
+
+unless supported by source evidence.
+
+---
+
+# 21. PDF CATALOGUE IMPORT
+
+Vendor should be able to upload:
+
+```text
+PDF
+Excel
+CSV
+JPG
+JPEG
+PNG
+WEBP
+```
+
+For PDF:
+
+- Detect selectable text
+- OCR scanned PDF
+- Detect tables
+- Detect multi-page tables
+- Preserve row/column relationship
+- Detect page number
+- Extract product-by-product
+- Extract rate/MRP
+- Extract part code
+- Extract brand
+- Extract specification
+- Extract UOM
+
+---
+
+# 22. EXCEL / CSV IMPORT
+
+Support flexible column mapping.
+
+Examples:
+
+```text
+Make / Manufacturer → Brand
+Part No / Part Number / Item Code / Material Code → Part Code
+Item Description → Description
+Product → Product Name
+Rate / Basic Rate → Purchase Rate
+List Price → MRP
+Disc % → Discount
+Unit → UOM
+```
+
+The system should automatically suggest column mapping.
+
+Allow user correction before final save.
+
+---
+
+# 23. IMAGE / OCR IMPORT
+
+For JPG/JPEG/PNG/WEBP:
+
+Use OCR/image analysis to identify:
+
+- Brand
+- Product
+- Part Code
+- Description
+- Specifications
+- MRP
+- Rate
+- UOM
+
+Do NOT directly save OCR output.
+
+Use:
+
+```text
+Upload
+↓
+OCR
+↓
+Extraction
+↓
+Validation
+↓
+Preview
+↓
+User Confirmation
+↓
+Database Save
+```
+
+---
+
+# 24. CATALOGUE ROW-BY-ROW PROCESSING
+
+Each catalogue row should become an individual product candidate.
+
+Example:
+
+```text
+Row 1 → Product A
+Row 2 → Product B
+Row 3 → Product C
+```
+
+Do not summarize an entire page into one product.
+
+Do not merge adjacent rows.
+
+---
+
+# 25. MULTI-LINE PRODUCT DESCRIPTION
+
+If one product occupies multiple lines:
+
+```text
+6206-2RS1
+Deep Groove Ball Bearing
+Single row
+Sealed
+30 × 62 × 16 mm
+```
+
+treat it as ONE product.
+
+Correct:
+
+```text
+Part Code:
+6206-2RS1
+
+Product:
+Deep Groove Ball Bearing
+
+Description:
+Single row sealed bearing
+
+Specification:
+30 × 62 × 16 mm
+```
+
+---
+
+# 26. CATALOGUE HEADERS ARE NOT PRODUCTS
+
+Do not convert:
+
+```text
+BEARINGS
+AUTOMATION PRODUCTS
+ELECTRICAL PRODUCTS
+PLC
+SENSORS
+```
+
+into individual products unless there is actual evidence that the text represents a sellable product.
+
+These should normally become:
+
+```text
+Category
+Subcategory
+Product Family
+```
+
+---
+
+# 27. PRODUCT PAGE VALIDATION
+
+When website pages are analysed, identify product pages.
+
+Look for evidence such as:
+
+```text
+Product title
+Part number
+Model number
+Technical specification
+Datasheet
+Product image
+Product description
+Price
+Product enquiry
+Product table
+Manufacturer information
+```
+
+URL structure alone is not enough.
+
+---
+
+# 28. PRODUCT CONFIDENCE SCORE
+
+Calculate:
+
+```text
+Product name found in product section       +25
+Part/model number found                     +25
+Technical specification found               +20
+Product image associated                    +10
+Product description found                   +10
+Price/rate found                             +5
+Product detail page                          +5
+```
+
+Result:
+
+```text
+90–100% = High confidence
+75–89%  = Medium confidence
+50–74%  = Review required
+Below 50% = Reject / Do not create product
+```
+
+---
+
+# 29. SUSPICIOUS PRODUCT DETECTION
+
+After analysing all catalogue/website data, run a second quality check.
+
+Automatically detect:
+
+```text
+Product name looks like address
+Product name contains phone number
+Product name contains email
+Product name contains GST/PAN
+Product name contains "IndiaMART"
+Product name contains "Copyright"
+Product name looks like tagline
+Product name equals category
+Product name equals navigation
+Product name is an unusually long sentence
+Product has no product evidence
+Product has no part/model/designation
+Product appears to be company information
+Product appears to be footer text
+```
+
+Flag:
+
+```text
+VALID
+REVIEW
+REJECT
+```
+
+---
+
+# 30. SUSPICIOUS DATA REPORT
+
+After analysis show:
+
+```text
+Products detected: 126
+Valid products: 108
+Needs Review: 12
+Rejected: 6
+```
+
+Example:
+
+```text
+❌ Developed and Managed by IndiaMART InterMESH Limited
+Reason:
+Platform Attribution
+
+❌ Ahmedabad Gujarat 382430
+Reason:
+Vendor Address
+
+❌ Your Trusted Engineering Partner
+Reason:
+Marketing Tagline
+
+❌ Automation Products
+Reason:
+Category / Product Family
+```
+
+The user should not need to manually check hundreds of records.
+
+---
+
+# 31. SMART DATA QUALITY SCANNER
+
+Create a validation function similar to:
+
+```text
+validateExtractedProduct(product)
+```
+
+Check:
+
+```text
+Is product name meaningful?
+Is it source-supported?
+Does product evidence exist?
+Is it actually a product?
+Is it a category?
+Is it an address?
+Is it contact information?
+Is it website metadata?
+Is it tagline?
+Is it duplicate?
+Is it suspicious?
+```
+
+Return:
+
+```text
+VALID
+REVIEW
+REJECT
+```
+
+---
+
+# 32. VENDOR AUTO-FILL
+
+After analysis, automatically populate the Vendor Add form.
+
+Example:
+
+```text
+Company Name → Auto-filled
+Legal Name → Auto-filled if found
+Website → Existing input
+Address → Auto-filled
+City → Auto-filled
+State → Auto-filled
+PIN → Auto-filled
+Phone → Auto-filled
+Email → Auto-filled
+GST → Auto-filled if found
+PAN → Auto-filled if found
+MSME → Auto-filled if found
+Brands → Auto-filled
+Categories → Auto-filled
+Product Families → Auto-filled
+Products → Auto-linked
+```
+
+---
+
+# 33. MISSING INFORMATION
+
+If important information is not found:
+
+Do NOT invent it.
+
+Mark:
+
+```text
+Not Found
+```
+
+and ask the user only for missing required information.
+
+Example:
+
+```text
+Company Name:
+✓ Found
+
+Website:
+✓ Found
+
+Address:
+✓ Found
+
+GST:
+⚠ Not Found
+
+PAN:
+⚠ Not Found
+
+Contact Person:
+⚠ Not Found
+```
+
+The user should not have to re-enter information that was already found.
+
+---
+
+# 34. USER REVIEW SCREEN
+
+Before saving, show:
+
+## Vendor Information
+
+```text
+Company
+Legal Name
+Website
+Address
+Contact
+GST
+PAN
+MSME
+```
+
+## Brands
+
+```text
+Brand A
+Brand B
+Brand C
+```
+
+## Categories
+
+```text
+Electrical
+Automation
+Mechanical
+```
+
+## Products
+
+```text
+Brand | Product | Part Code | Category | Specification | Confidence
+```
+
+## Suspicious Items
+
+Only uncertain records.
+
+Allow:
+
+```text
+Accept
+Edit
+Reject
+Ignore
+```
+
+---
+
+# 35. DUPLICATE DETECTION
+
+Before creating products:
+
+Check existing Product Master.
+
+Priority:
+
+```text
+Exact Brand + Exact Part Code
+↓
+Exact Manufacturer Code
+↓
+Exact Model
+↓
+Brand + Product Designation
+↓
+Brand + Product + Specification
+```
+
+If exact match exists:
+
+```text
+Use existing Product
+```
+
+Do not create duplicate.
+
+---
+
+# 36. VENDOR PRODUCT MAPPING
+
+Create/maintain:
+
+```text
+Vendor
++
+Brand
++
+Product
++
+Part Code
++
+Vendor Product Code
++
+Catalogue
++
+Rate
+```
+
+Example:
+
+```text
+ABC Vendor
+↓
+SKF
+↓
+Deep Groove Ball Bearing
+↓
+6206-2RS1
+↓
+Vendor Rate
+```
+
+---
+
+# 37. RATE / MRP AUTOMATION
+
+Catalogue rate must be linked to the correct product.
+
+Do NOT match rate using only product description.
+
+Priority:
+
+```text
+Exact Part Code
+↓
+Manufacturer Code
+↓
+Model Number
+↓
+Brand + Product + Specification
+```
+
+Never assign a rate from a similar-looking product.
+
+---
+
+# 38. RATE HISTORY
+
+When a new catalogue/rate list is uploaded:
+
+DO NOT overwrite old historical rates.
+
+Use:
+
+```text
+Rate Version
+Effective Date
+Effective Year
+Source Catalogue
+Old Rate
+New Rate
+Changed By
+Changed Date
+Reason
+```
+
+Example:
+
+```text
+2026:
+6206-2RS1 = ₹503
+Effective: 01-08-2026
+
+2027:
+6206-2RS1 = ₹575
+Effective: 01-04-2027
+```
+
+The 2026 rate remains historical.
+
+---
+
+# 39. NEW RATE LIST — ONE UPLOAD
+
+When a new vendor catalogue arrives:
+
+```text
+Upload New Catalogue
+        ↓
+Detect Vendor
+        ↓
+Detect Brand
+        ↓
+Detect Part Code
+        ↓
+Match Existing Products
+        ↓
+Compare Old vs New Rate
+        ↓
+Show Changes
+        ↓
+Confirm
+        ↓
+Create New Rate Version
+        ↓
+Mark New Rate Current
+        ↓
+Preserve Old Rate
+```
+
+If:
+
+```text
+Same Part Code + Same Rate
+```
+
+do not create unnecessary duplicate version.
+
+If:
+
+```text
+Same Part Code + Changed Rate
+```
+
+create new rate version.
+
+If:
+
+```text
+New Part Code
+```
+
+create new product/rate after validation.
+
+If a product is absent from the latest catalogue:
+
+Do NOT delete it.
+
+Mark:
+
+```text
+Not Present in Latest Catalogue
+```
+
+or:
+
+```text
+Discontinued / Inactive
+```
+
+only according to defined business rules.
+
+---
+
+# 40. BULK DELETE / ARCHIVE
+
+I need one-shot catalogue management.
+
+Allow:
+
+```text
+Select Catalogue Import Batch
+↓
+View Products/Rates from Batch
+↓
+Archive / Delete / Rollback
+```
+
+But never destroy historical transaction records.
+
+Before permanent deletion:
+
+Check dependencies:
+
+```text
+RFQ
+Quotation
+Purchase Order
+Sales Order
+Invoice
+Payment
+Stock
+Historical Rate
+Vendor Product Mapping
+```
+
+If historical dependency exists:
+
+Use archive/deactivate instead of destructive deletion.
+
+---
+
+# 41. IMPORT BATCH CONTROL
+
+Every import receives:
+
+```text
+Import Batch ID
+Vendor
+File Name
+File Type
+Upload Date
+Uploaded By
+Total Records
+New Products
+Existing Products
+Updated Products
+Duplicates
+Rejected
+Needs Review
+Rate Changes
+Status
+```
+
+This allows one-click rollback/archive of a bad catalogue import.
+
+---
+
+# 42. PRODUCT SOURCE TRACEABILITY
+
+Every product must retain:
+
+```text
+Source Type:
+Website / PDF / Excel / Image
+
+Source URL
+Source File
+Catalogue Page
+Catalogue Row
+Original Source Text
+Extraction Date
+AI Analysis Version
+Confidence
+```
+
+This is important when a user asks:
+
+### "Where did this product/rate come from?"
+
+ERP must show the source.
+
+---
+
+# 43. WEBSITE RE-ANALYSIS
+
+Allow:
+
+```text
+Re-analyse Vendor Website
+```
+
+But do not recreate everything from scratch.
+
+Compare:
+
+```text
+New Products
+Existing Products
+Changed Products
+Removed/Unavailable Products
+Changed Brands
+Changed Categories
+Suspicious Items
+```
+
+Only apply confirmed changes.
+
+---
+
+# 44. WEBSITE CHANGE DETECTION
+
+Store:
+
+```text
+URL Hash
+Page Hash
+Catalogue Hash
+Analysis Version
+Last Analysed Date
+```
+
+If page content has not changed:
+
+Do not repeatedly process it.
+
+If changed:
+
+Analyse only changed content where possible.
+
+---
+
+# 45. AI COST CONTROL
+
+Use deterministic extraction first.
+
+Use AI only where needed.
+
+Recommended architecture:
+
+```text
+HTML Parser
++
+Regex
++
+Table Extraction
++
+OCR
++
+Structured Metadata
+        ↓
+AI Classification
+        ↓
+AI Product Matching
+        ↓
+Validation Engine
+```
+
+Do not send the same webpage repeatedly to AI.
+
+Cache analysis results.
+
+---
+
+# 46. AI PROVIDER ARCHITECTURE
+
+Make AI provider modular.
+
+Example:
+
+```text
+AI Extraction Service
+        ↓
+Gemini
+        ↓
+Other supported provider
+        ↓
+Rule-Based Fallback
+```
+
+If AI is temporarily unavailable:
+
+The ERP must continue basic extraction and must NOT crash.
+
+---
+
+# 47. NEVER SAVE RAW AI OUTPUT DIRECTLY
+
+Never use:
+
+```text
+Website
+↓
+AI
+↓
+INSERT Product
+```
+
+Instead:
+
+```text
+Website
+↓
+Extraction
+↓
+Classification
+↓
+Validation
+↓
+Normalization
+↓
+Confidence
+↓
+Duplicate Check
+↓
+Preview
+↓
+User Confirmation
+↓
+Database Transaction
+↓
+Verify Save
+```
+
+---
+
+# 48. DATABASE PERSISTENCE
+
+All vendor/catalogue/product changes must be saved to the real production database.
+
+Do NOT rely on:
+
+- localStorage
+- temporary frontend state
+- in-memory arrays
+- mock data
+- temporary JSON
+- demo data
+
+Success notification is NOT proof of database persistence.
+
+After save:
+
+```text
+INSERT
+↓
+COMMIT
+↓
+SELECT / READ-BACK
+↓
+Confirm record exists
+↓
+Return success
+↓
+Refresh affected ERP data
+```
+
+If database save fails:
+
+Show the real error.
+
+Do not show:
+
+```text
+Saved successfully
+```
+
+when the DB transaction failed.
+
+---
+
+# 49. NO MANUAL BROWSER REFRESH
+
+After:
+
+- Add Vendor
+- Edit Vendor
+- Import Catalogue
+- Add Brand
+- Add Product
+- Update Rate
+- Import New Rate List
+- Archive Catalogue
+- Update Vendor Product Mapping
+
+the affected screens must update automatically.
+
+Use targeted API revalidation/cache invalidation.
+
+Do not require F5/browser refresh.
+
+---
+
+# 50. PRODUCT SEARCH
+
+ERP search must work using:
+
+```text
+Part Code
+Manufacturer Code
+Model
+Source Product Name
+Normalized Product Name
+Brand
+Product Family
+Category
+Description
+Specification
+Vendor
+```
+
+Example:
+
+Search:
+
+```text
+6206-2RS1
+```
+
+must find exact product.
+
+Search:
+
+```text
+Deep Groove Ball Bearing
+```
+
+must also find it.
+
+Search:
+
+```text
+SKF bearing
+```
+
+must also find relevant products.
+
+---
+
+# 51. REQUIREMENT AUTO-IDENTIFICATION
+
+Once the Vendor/Product Catalogue database is built, future purchase requirements should automatically use it.
+
+Example requirement:
+
+```text
+SKF 6206-2RS1 bearing 20 Nos
+```
+
+ERP should identify:
+
+```text
+Brand:
+SKF
+
+Product:
+Deep Groove Ball Bearing
+
+Part Code:
+6206-2RS1
+
+Category:
+Bearings
+
+UOM:
+Nos
+
+MRP:
+Current Catalogue MRP
+
+Discount:
+Applicable Discount
+
+Purchase Rate:
+Current Vendor Rate
+
+Supplier:
+Mapped Vendor
+```
+
+Exact part code must have the highest priority.
+
+---
+
+# 52. AMBIGUOUS MATCHING
+
+If requirement says:
+
+```text
+6006 bearing
+```
+
+and catalogue contains:
+
+```text
+6006
+6006/C3
+6006-2RS1
+6006-2Z
+```
+
+DO NOT automatically choose one.
+
+Show:
+
+```text
+Possible Matches:
+1. 6006
+2. 6006/C3
+3. 6006-2RS1
+4. 6006-2Z
+```
+
+Ask user to select if confidence is insufficient.
+
+---
+
+# 53. NEVER INVENT PROCUREMENT DATA
+
+Never invent:
+
+- Brand
+- Product
+- Part Code
+- MRP
+- Purchase Rate
+- Discount
+- Supplier
+- UOM
+- GST
+- Contact
+- Address
+
+If unavailable:
+
+```text
+Not Found
+```
+
+If uncertain:
+
+```text
+Review Required
+```
+
+---
+
+# 54. COMPLETE VENDOR INTELLIGENCE PROFILE
+
+After analysis, Vendor Master should automatically generate:
+
+## Vendor
+
+Company / Legal / Contact / Address / GST / PAN / MSME / Website
+
+## Brands
+
+All confidently detected brands.
+
+## Categories
+
+All confidently detected categories.
+
+## Product Families
+
+All detected product families.
+
+## Products
+
+Only validated actual products.
+
+## Catalogue
+
+Uploaded catalogue files and source pages.
+
+## Rate
+
+Current and historical vendor rates.
+
+## Data Quality
+
+Confidence and suspicious records.
+
+---
+
+# 55. EXAMPLE FINAL RESULT
+
+```text
+VENDOR
+────────────────────────
+
+Company:
+ABC Industrial Solutions
+
+Website:
+https://example.com
+
+GST:
+Found
+
+Address:
+Found
+
+Phone:
+Found
+
+Email:
+Found
+
+
+BRANDS
+────────────────────────
+
+SKF
+Siemens
+Schneider Electric
+
+
+CATEGORIES
+────────────────────────
+
+Bearings
+Automation
+Electrical
+
+
+PRODUCT FAMILIES
+────────────────────────
+
+Deep Groove Ball Bearings
+PLC
+HMI
+MCB
+
+
+VALID PRODUCTS
+────────────────────────
+
+SKF
+6206-2RS1
+Deep Groove Ball Bearing
+30 × 62 × 16 mm
+MRP: ₹XXX
+Confidence: 99%
+
+
+SUSPICIOUS ITEMS
+────────────────────────
+
+1. Developed and Managed by IndiaMART InterMESH Limited
+   → Platform Attribution
+   → Rejected
+
+2. Ahmedabad, Gujarat...
+   → Address
+   → Rejected
+
+3. Quality Engineering Solutions
+   → Tagline
+   → Rejected
+```
+
+---
+
+# 56. IMPORTANT — QUALITY OVER QUANTITY
+
+The objective is NOT:
+
+```text
+Extract maximum text
+```
+
+The objective is:
+
+```text
+Extract maximum VALID business information
+```
+
+For example:
+
+```text
+Website contains 500 text blocks
+```
+
+The ERP may correctly identify:
+
+```text
+Vendor information: 20
+Brands: 5
+Categories: 8
+Actual products: 120
+Suspicious: 15
+Rejected: 332
+```
+
+This is a successful result.
+
+Do not try to turn all 500 text blocks into products.
+
+---
+
+# 57. FINAL ACCEPTANCE TEST
+
+Test the system using:
+
+```text
+https://www.dhairyaengineering.co.in/
+```
+
+and a real vendor catalogue containing product/rate/part-code information.
+
+The system must correctly distinguish:
+
+```text
+Vendor
+Brand
+Category
+Product Family
+Actual Product
+Part Code
+Specification
+Rate
+Address
+Contact
+Tagline
+Footer
+Platform Attribution
+```
+
+Verify specifically that:
+
+```text
+"Developed and Managed by IndiaMART InterMESH Limited"
+```
+
+is NOT created as a product, brand, or vendor unless independently supported.
+
+---
+
+# 58. FINAL ACCEPTANCE CRITERIA
+
+The feature is complete only when:
+
+- Vendor can be created using website/catalogue information.
+- Vendor form is automatically populated.
+- Missing information is clearly shown.
+- User is asked only for genuinely missing/uncertain required data.
+- Website is analysed intelligently.
+- PDF is analysed.
+- Excel/CSV is analysed.
+- JPG/JPEG/PNG/WEBP can be analysed.
+- Brands are automatically identified.
+- Categories are automatically identified.
+- Product families are automatically identified.
+- Actual products are automatically identified.
+- Part codes are preserved.
+- Model numbers are preserved.
+- Technical specifications are extracted.
+- MRP/rates are linked to the correct product.
+- Product names are source-supported.
+- AI does not invent product names.
+- Address is never treated as a product.
+- Tagline is never treated as a product.
+- Footer is never treated as a product.
+- IndiaMART/platform attribution is never treated as a product.
+- Navigation text is never treated as a product.
+- Suspicious products are automatically detected.
+- Low-confidence products require review.
+- Existing products are matched before duplicates are created.
+- Vendor Product Mapping is maintained.
+- Rate history is preserved by effective date/year.
+- New rate catalogue can be uploaded once and automatically update current rates.
+- Old rates remain available historically.
+- Catalogue import can be archived/rolled back by batch.
+- Historical RFQ/PO/quotation rates do not change when new catalogue rates arrive.
+- All saved data persists in the production database.
+- No fake success notification is shown when database save fails.
+- No manual browser refresh is required.
+- Existing ERP modules and data are preserved.
+- Existing procurement workflow is not broken.
+
+---
+
+# FINAL DESIGN PRINCIPLE
+
+## THE ERP SHOULD WORK LIKE A SMART PROCUREMENT DATA ASSISTANT.
+
+The user should provide:
+
+```text
+Vendor Name
++
+Website
+and/or
+Catalogue
+```
+
+The ERP should do the majority of the work automatically:
+
+```text
+IDENTIFY
+→ CLEAN
+→ CLASSIFY
+→ EXTRACT
+→ MATCH
+→ VALIDATE
+→ DETECT ERRORS
+→ PREPARE
+→ SHOW ONLY EXCEPTIONS
+→ USER CONFIRMS
+→ SAVE
+```
+
+The system must prefer:
+
+### 100 verified products
+
+over:
+
+### 500 incorrect products containing addresses, taglines, footer text and unrelated website information.
+
+Do not rebuild the ERP.
+
+Implement this as an enhancement to the existing **MRO PROCUREMENT SOLUTION** Vendor, Brand, Category, Product, Catalogue, Rate and Vendor Product Mapping architecture.

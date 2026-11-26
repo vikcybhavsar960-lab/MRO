@@ -1,0 +1,6 @@
+{
+  "name": "MRO PROCUREMENT SOLUTION",
+  "description": "Enterprise B2B Industrial MRO Procurement ERP & Supply Chain Management System with complete workflow from requirement to delivery, rate comparison, and Google integrations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,2107 @@
+# MRO PROCUREMENT SOLUTION ERP
+## MASTER PROMPT — AUTOMATED VENDOR INTELLIGENCE + CATALOGUE + WEBSITE ANALYSIS
+
+I have an existing **MRO PROCUREMENT SOLUTION ERP**.
+
+DO NOT rebuild the ERP from scratch.
+
+First inspect the existing application, database, backend/API, Vendor Master, Brand Master, Category Master, Product Master, Catalogue/Import modules, Requirement Management, RFQ Management, Vendor Product Mapping and all related services.
+
+Preserve all existing ERP functionality and data.
+
+The objective of this enhancement is to make **Vendor Master intelligent**.
+
+When I add a new vendor, the ERP should automatically analyse the vendor's catalogue, PDF, Excel, images, website and other supplied information and identify:
+
+- What products the vendor deals in
+- Which brands the vendor deals in
+- Which material categories they supply
+- Product families
+- Product types
+- Part numbers / model numbers
+- Manufacturer codes
+- Technical specifications
+- UOM where identifiable
+- Available catalogue rates/MRP where available
+- Product/application information
+- Website product information
+- Contact/company information where available
+- Confidence level of each identification
+- Source of each identified data
+
+The system must NEVER blindly guess or create incorrect master data.
+
+---
+
+# MODULE 1 — VENDOR MASTER INTELLIGENCE
+
+Enhance the existing Vendor Master.
+
+When Admin/User creates a new Vendor, provide:
+
+### Vendor Basic Information
+
+- Vendor Name
+- Legal Name
+- Vendor Code
+- GSTIN
+- PAN
+- Contact Person
+- Mobile
+- Email
+- Address
+- City
+- State
+- Country
+- Website
+- Vendor Type
+- Status
+
+Add:
+
+### "AI Vendor Intelligence" section
+
+Fields:
+
+- Vendor Profile
+- Brands Dealing
+- Product Categories
+- Product Families
+- Product Types
+- Manufacturer/Brand Associations
+- Catalogue Files
+- Website URLs
+- Extracted Products
+- Extracted Part Codes
+- Extracted Specifications
+- Catalogue Rates
+- Last Catalogue Analysis Date
+- Last Website Analysis Date
+- Intelligence Confidence
+- Data Sources
+- Analysis Status
+
+---
+
+# MODULE 2 — VENDOR CATALOGUE UPLOAD
+
+Allow a user to upload vendor catalogues directly from Vendor Master.
+
+Supported formats:
+
+- PDF
+- JPG
+- JPEG
+- PNG
+- WEBP
+- XLS
+- XLSX
+- CSV
+
+Example:
+
+Vendor → 4D Technology → Upload `4d brochure.pdf`
+
+The system should automatically process the file.
+
+Workflow:
+
+UPLOAD
+
+↓
+
+Detect file type
+
+↓
+
+Extract text/table/image information
+
+↓
+
+OCR if required
+
+↓
+
+Identify vendor/company information
+
+↓
+
+Identify brands
+
+↓
+
+Identify product categories
+
+↓
+
+Identify products
+
+↓
+
+Identify part/model numbers
+
+↓
+
+Identify specifications
+
+↓
+
+Identify rates/MRP if available
+
+↓
+
+Map products to ERP Category Master
+
+↓
+
+Match existing Brand Master
+
+↓
+
+Match existing Product Master
+
+↓
+
+Detect duplicates
+
+↓
+
+Generate Vendor Intelligence Profile
+
+↓
+
+Show Preview
+
+↓
+
+User confirms
+
+↓
+
+Save to ERP database
+
+---
+
+# MODULE 3 — PDF ANALYSIS
+
+PDF processing must support:
+
+### Text PDFs
+
+Extract text directly.
+
+### Scanned PDFs
+
+Use OCR.
+
+### Catalogue tables
+
+Detect:
+
+- Product Code
+- Part Number
+- Model Number
+- Product Name
+- Description
+- Specification
+- Size
+- Rating
+- Voltage
+- Current
+- Material
+- UOM
+- MRP
+- Rate
+- Brand
+- Manufacturer
+- Application
+
+### Multi-page catalogue
+
+Analyse ALL pages.
+
+Do not analyse only the first page.
+
+For each page maintain source/page reference.
+
+Example:
+
+Source File:
+`4d brochure.pdf`
+
+Page:
+2
+
+Extracted Product Category:
+`Panel Accessories`
+
+Confidence:
+`High`
+
+---
+
+# MODULE 4 — AUTOMATIC BRAND IDENTIFICATION
+
+When catalogue is uploaded, identify brands mentioned in the document.
+
+Examples:
+
+Brand names may appear as:
+
+- Manufacturer
+- Make
+- Brand
+- Product brand
+- Logo
+- Model prefix
+- Catalogue heading
+- Distributor/dealer information
+
+Match extracted brands against existing:
+
+### Brand Master
+
+If exact brand exists:
+
+Use existing Brand ID.
+
+If brand does not exist:
+
+Show:
+
+"New Brand Detected"
+
+Do NOT automatically create it without confirmation unless existing ERP rules allow automatic master creation.
+
+Provide:
+
+- Brand Name
+- Existing/New
+- Source
+- Confidence
+- Number of products
+- Number of catalogue references
+
+Example:
+
+Vendor:
+4D Technology
+
+Detected Categories:
+
+- Automation / PLC / HMI
+- Sensors
+- Electrical
+- Switchgear
+- Panel Accessories
+- Enclosures
+- Cables
+- Industrial Connectors
+- Gaskets
+
+Detected Product Families:
+
+- Proximity Sensors
+- Photoelectric Sensors
+- Rotary Encoders
+- Pressure Transmitters
+- RTD / Thermocouples
+- Limit Switches
+- Humidity Sensors
+- Level Switches
+- SMPS
+- Controllers
+- Isolators
+- SSR
+- Digital Meters
+- Transformers
+- Timers
+- Relays & Sockets
+- Ethernet Switches
+- Cables
+- Switchgears
+- PLC & HMI
+- PU Gaskets
+- Enclosures
+- Panel Accessories
+
+These should become structured vendor intelligence rather than simply storing the PDF.
+
+---
+
+# MODULE 5 — AUTOMATIC PRODUCT CATEGORY IDENTIFICATION
+
+Map extracted products to the existing ERP Category Master.
+
+Use the existing categories wherever possible.
+
+Example:
+
+Proximity Sensor
+→ Automation / PLC / HMI / Sensors
+
+MCB
+→ Electrical
+
+PLC
+→ Automation / PLC / HMI
+
+PU Gasket
+→ Seals / O-Rings / Gaskets
+
+Cable Gland
+→ Electrical / Cable Accessories
+
+Enclosure
+→ Electrical / Enclosures / Panel Accessories
+
+Do not create unnecessary duplicate categories.
+
+Category matching should use:
+
+- Product name
+- Description
+- Technical specifications
+- Existing category aliases
+- Brand
+- Catalogue context
+- Product family
+
+Category alone must NOT determine the exact product.
+
+---
+
+# MODULE 6 — PRODUCT FAMILY IDENTIFICATION
+
+Create structured product families.
+
+Example:
+
+Category:
+Automation / PLC / HMI
+
+Product Family:
+Sensors
+
+Product Types:
+
+- Proximity Sensor
+- Photoelectric Sensor
+- Rotary Encoder
+- Pressure Transmitter
+- RTD
+- Thermocouple
+- Limit Switch
+- Level Sensor
+- Humidity Sensor
+
+Another example:
+
+Category:
+Electrical
+
+Product Family:
+Panel Accessories
+
+Product Types:
+
+- Cable Gland
+- Cable Tie
+- Cable Conduit
+- Industrial Plug
+- Push Button
+- Selector Switch
+- Terminal/Lug
+- Ferrule
+- MCB Channel
+- Label Sleeve
+
+This information should be saved in structured database fields.
+
+---
+
+# MODULE 7 — PART CODE / MODEL NUMBER EXTRACTION
+
+This is extremely important.
+
+Automatically identify:
+
+- Part Code
+- Part Number
+- Item Code
+- Material Code
+- Manufacturer Code
+- Model Number
+- Series Number
+- SKU
+
+Preserve the exact original code.
+
+DO NOT modify technically meaningful characters.
+
+For example:
+
+6006
+
+6006/C3
+
+6006-2RS1
+
+6006-2Z
+
+must remain separate products if they represent different catalogue products.
+
+Similarly preserve:
+
+- `/`
+- `-`
+- `.`
+- `+`
+- suffixes
+- prefixes
+- voltage/rating suffixes
+- size suffixes
+- revision codes
+
+Do not simplify a technical part number incorrectly.
+
+---
+
+# MODULE 8 — AUTOMATIC PRODUCT DATABASE MATCHING
+
+For every extracted product, check existing ERP Product Master.
+
+Matching priority:
+
+1. Exact Part Code
+2. Exact Manufacturer Code
+3. Exact Model Number
+4. Brand + Part Code
+5. Brand + Model
+6. Brand + Product Name + Specification
+7. Product Name + Specification
+8. Description similarity
+9. Category
+
+Category alone must NEVER create an automatic exact match.
+
+If confidence is low:
+
+Status:
+
+`REVIEW REQUIRED`
+
+If multiple products match:
+
+Status:
+
+`AMBIGUOUS MATCH`
+
+Show all candidates to the user.
+
+Never guess.
+
+---
+
+# MODULE 9 — VENDOR PRODUCT MAPPING
+
+Automatically create/update:
+
+### Vendor Product Mapping
+
+Vendor ID
+
++
+
+Brand ID
+
++
+
+Product ID
+
++
+
+Part Code
+
++
+
+Manufacturer Code
+
++
+
+Model
+
++
+
+Vendor Reference
+
++
+
+Catalogue Source
+
++
+
+Source Page
+
++
+
+Confidence
+
+This will allow the ERP to answer:
+
+"Which products does this vendor supply?"
+
+and:
+
+"Which vendors can supply this product?"
+
+---
+
+# MODULE 10 — BRAND ↔ VENDOR RELATIONSHIP
+
+Automatically create Vendor–Brand relationships.
+
+Example:
+
+Vendor:
+ABC Industrial
+
+Brands:
+
+- Schneider Electric
+- Siemens
+- ABB
+- Phoenix Contact
+
+Relationship:
+
+Vendor → Brand → Product Category → Products
+
+Store:
+
+- Vendor ID
+- Brand ID
+- Category ID
+- Product Count
+- Source
+- Confidence
+- First Detected Date
+- Last Verified Date
+
+Do not claim a vendor is an authorised distributor unless the catalogue/website explicitly supports that claim.
+
+Use labels such as:
+
+- Deals In
+- Supplies
+- Listed In Catalogue
+- Mentions
+- Distributor
+- Authorised Distributor
+
+Only use "Authorised Distributor" when evidence supports it.
+
+---
+
+# MODULE 11 — WEBSITE ANALYSIS
+
+Vendor Master should allow:
+
+### Website URL
+
+Example:
+
+`https://vendorwebsite.com`
+
+Provide:
+
+### "Analyse Website"
+
+button.
+
+The ERP should inspect publicly accessible website content where technically and legally permitted.
+
+Analyse:
+
+- Homepage
+- About
+- Products
+- Product Categories
+- Brands
+- Applications
+- Downloads
+- Catalogue pages
+- Product pages
+- Manufacturer information
+
+Extract:
+
+- Vendor/company name
+- Product categories
+- Product families
+- Product names
+- Brands
+- Model numbers
+- Part numbers
+- Technical specifications
+- Applications
+- Datasheets
+- Catalogue links
+- Product images
+- Contact details where publicly listed
+
+Do not crawl private/login-protected content.
+
+Respect website robots/terms/rate limits.
+
+---
+
+# MODULE 12 — WEBSITE PRODUCT IDENTIFICATION
+
+Example:
+
+Vendor website contains:
+
+"Industrial Sensors"
+
+↓
+
+Identify:
+
+Category:
+Instrumentation / Sensors
+
+Product Family:
+Industrial Sensors
+
+Products:
+
+- Proximity Sensors
+- Photoelectric Sensors
+- Pressure Sensors
+- Temperature Sensors
+
+If product pages provide model numbers:
+
+Store exact model numbers.
+
+If website provides brand:
+
+Link product to Brand Master.
+
+If website provides catalogue PDF:
+
+Automatically add the PDF to Vendor Catalogue Sources.
+
+---
+
+# MODULE 13 — WEBSITE + CATALOGUE COMBINATION
+
+This is important.
+
+Do not treat PDF and website as separate unrelated information.
+
+Combine intelligence.
+
+Example:
+
+PDF says:
+
+Brand = XYZ
+
+Product = Proximity Sensor
+
+Model = XYZ-PN10
+
+Website says:
+
+XYZ-PN10
+10 mm sensing distance
+24 VDC
+IP67
+
+Final ERP Product Intelligence:
+
+Brand:
+XYZ
+
+Product:
+Proximity Sensor
+
+Part Code:
+XYZ-PN10
+
+Specification:
+10 mm / 24 VDC / IP67
+
+Sources:
+
+Catalogue PDF + Website
+
+Confidence:
+High
+
+---
+
+# MODULE 14 — VENDOR PRODUCT COVERAGE DASHBOARD
+
+Add a Vendor Intelligence dashboard.
+
+Show:
+
+### Vendor Summary
+
+Vendor Name
+
+Products:
+125
+
+Brands:
+8
+
+Categories:
+12
+
+Product Families:
+35
+
+Catalogue Files:
+6
+
+Website Analysed:
+Yes
+
+Last Updated:
+Date/time
+
+### Category Coverage
+
+Electrical — 35 products
+
+Automation — 42 products
+
+Instrumentation — 18 products
+
+Panel Accessories — 30 products
+
+etc.
+
+### Brand Coverage
+
+Brand A — 45 products
+
+Brand B — 30 products
+
+Brand C — 20 products
+
+etc.
+
+---
+
+# MODULE 15 — VENDOR INTELLIGENCE SCORE
+
+Calculate a transparent score based on available evidence.
+
+Example:
+
+Catalogue available: +20
+
+Website available: +15
+
+Products identified: +20
+
+Brands identified: +15
+
+Part codes identified: +15
+
+Specifications identified: +10
+
+Recently verified: +5
+
+Maximum:
+100
+
+Do NOT use the score to invent information.
+
+Display:
+
+Vendor Intelligence:
+`82/100`
+
+and explain why.
+
+---
+
+# MODULE 16 — AUTOMATIC REQUIREMENT MATCHING
+
+The Vendor Intelligence data must integrate with Requirement Management.
+
+Example user enters:
+
+"Schneider 10A 2 Pole MCB 20 Nos"
+
+ERP should identify:
+
+Brand:
+Schneider Electric
+
+Product:
+MCB
+
+Specification:
+10A
+
+Pole:
+2P
+
+Quantity:
+20
+
+UOM:
+Nos
+
+Category:
+Electrical
+
+Then search:
+
+Vendor → Brand → Product → Part Code
+
+and identify vendors who actually deal in that product.
+
+Example result:
+
+Vendor A
+Schneider Electric
+Exact Product Match
+Part Code: XXXXX
+Confidence: 96%
+
+Vendor B
+Schneider Electric
+Similar Product
+Confidence: 78%
+
+Vendor C
+Electrical supplier
+No exact catalogue match
+Confidence: 42%
+
+Do not present a low-confidence supplier as an exact match.
+
+---
+
+# MODULE 17 — RFQ VENDOR RECOMMENDATION
+
+When creating RFQ:
+
+Requirement
+
+↓
+
+Identify Brand/Product/Category
+
+↓
+
+Search Vendor Product Mapping
+
+↓
+
+Check vendor category coverage
+
+↓
+
+Check brand coverage
+
+↓
+
+Check historical purchase data
+
+↓
+
+Check current catalogue
+
+↓
+
+Recommend suitable vendors
+
+Display reason:
+
+"Recommended because vendor supplies this brand/product."
+
+or:
+
+"Recommended because vendor catalogue contains matching product family."
+
+---
+
+# MODULE 18 — CATALOGUE RATE EXTRACTION
+
+If catalogue contains:
+
+MRP
+
+Rate
+
+Basic Rate
+
+List Price
+
+Discount
+
+Dealer Price
+
+Purchase Price
+
+identify them separately.
+
+Do NOT confuse MRP with purchase rate.
+
+Store:
+
+MRP
+
+Discount %
+
+Purchase Rate
+
+Rate Type
+
+Currency
+
+Effective Date
+
+Source File
+
+Source Page
+
+Version
+
+If catalogue does not contain rate:
+
+Leave the rate blank.
+
+Never invent rates.
+
+---
+
+# MODULE 19 — CATALOGUE VERSION HISTORY
+
+Every uploaded catalogue must have:
+
+Catalogue ID
+
+Vendor ID
+
+File Name
+
+File Type
+
+Upload Date
+
+Uploaded By
+
+Catalogue Version
+
+Effective Date
+
+Expiry Date
+
+Status
+
+Source
+
+Extraction Status
+
+Product Count
+
+Brand Count
+
+Category Count
+
+Rate Count
+
+Error Count
+
+Example:
+
+Vendor:
+ABC
+
+Catalogue:
+ABC_2026.pdf
+
+Version:
+2026
+
+Status:
+Historical
+
+Next:
+
+ABC_2027.pdf
+
+Version:
+2027
+
+Status:
+Current
+
+Old catalogue data must remain available for historical transactions.
+
+---
+
+# MODULE 20 — RE-UPLOAD / UPDATE
+
+If the same vendor sends a new catalogue:
+
+Vendor Master
+→ Upload New Catalogue
+
+ERP compares:
+
+OLD CATALOGUE
+
+vs
+
+NEW CATALOGUE
+
+Show:
+
+New Products
+
+Updated Products
+
+Changed Part Codes
+
+Changed Specifications
+
+Changed Rates
+
+Removed Products
+
+Unchanged Products
+
+New Brands
+
+New Categories
+
+Then:
+
+User clicks:
+
+### APPLY UPDATE
+
+System creates a database transaction.
+
+New catalogue becomes current.
+
+Old catalogue becomes historical.
+
+Do not overwrite historical transaction values.
+
+---
+
+# MODULE 21 — PRODUCT REMOVAL DETECTION
+
+If an old catalogue contains:
+
+Product A
+
+Product B
+
+Product C
+
+and new catalogue contains:
+
+Product A
+
+Product B
+
+Product D
+
+do NOT automatically delete Product C.
+
+Mark:
+
+`Not Present in Latest Catalogue`
+
+or:
+
+`Discontinued / Historical`
+
+Only permanently delete when explicitly authorized.
+
+This protects old RFQ/PO/quotation history.
+
+---
+
+# MODULE 22 — SINGLE-CLICK BULK CATALOGUE MANAGEMENT
+
+Add:
+
+### Catalogue Manager
+
+Actions:
+
+- Upload
+- Analyse
+- Compare
+- Apply Update
+- Archive
+- Deactivate
+- Restore
+- Export
+- Delete Batch
+
+Allow selecting a catalogue/import batch and applying bulk action.
+
+Before deletion show:
+
+Catalogue
+
+Vendor
+
+Products affected
+
+Rates affected
+
+Brands affected
+
+Historical transactions linked
+
+Dependencies
+
+Then require confirmation.
+
+Never delete historical transactional data just because a catalogue was deleted.
+
+---
+
+# MODULE 23 — IMPORT BATCH
+
+Every catalogue import must receive:
+
+Import Batch ID
+
+Example:
+
+`CAT-IMP-2026-00125`
+
+Store:
+
+- Vendor
+- File
+- User
+- Date
+- Extracted records
+- Created records
+- Updated records
+- Duplicates
+- Errors
+- Review records
+- Status
+
+Allow:
+
+### Rollback / Archive Import Batch
+
+if the user uploaded the wrong catalogue.
+
+Rollback must be dependency-safe and transaction-controlled.
+
+---
+
+# MODULE 24 — IMAGE CATALOGUE SUPPORT
+
+Support:
+
+JPG
+
+JPEG
+
+PNG
+
+WEBP
+
+Use OCR/image analysis to identify:
+
+- Brand
+- Product
+- Part number
+- Specification
+- Category
+- Price
+- UOM
+
+Show extracted information before saving.
+
+Never directly write OCR results into master data without validation.
+
+---
+
+# MODULE 25 — AI EXTRACTION CONFIDENCE
+
+Every extracted field should have confidence.
+
+Example:
+
+Brand:
+Schneider Electric
+Confidence: 98%
+
+Part Code:
+LC1D09
+Confidence: 99%
+
+Category:
+Electrical / Contactors
+Confidence: 94%
+
+Specification:
+9A
+Confidence: 91%
+
+Rate:
+₹1,250
+Confidence: 88%
+
+If confidence is below configured threshold:
+
+`Needs Review`
+
+---
+
+# MODULE 26 — SOURCE TRACEABILITY
+
+Every automatically identified value must be traceable.
+
+Example:
+
+Product:
+Proximity Sensor
+
+Brand:
+XYZ
+
+Part Code:
+XYZ-123
+
+Source:
+
+`4d brochure.pdf`
+
+Page:
+
+`1`
+
+or:
+
+`vendorwebsite.com/products/xyz-123`
+
+The user must be able to click:
+
+### View Source
+
+and see where the information came from.
+
+---
+
+# MODULE 27 — DATA QUALITY RULES
+
+NEVER:
+
+- Invent a brand
+- Invent a product
+- Invent a part number
+- Invent MRP
+- Invent purchase rate
+- Invent supplier relationship
+- Invent manufacturer
+- Invent specifications
+
+If information is unavailable:
+
+`Not Available`
+
+If uncertain:
+
+`Needs Review`
+
+If conflicting:
+
+`Conflict Detected`
+
+Show both sources.
+
+---
+
+# MODULE 28 — DUPLICATE DETECTION
+
+Before creating products:
+
+Check:
+
+Vendor + Part Code
+
+Brand + Part Code
+
+Manufacturer Code
+
+Model Number
+
+Product Name
+
+Specification
+
+Aliases
+
+Existing Product Master
+
+If duplicate:
+
+Do not create another product.
+
+Offer:
+
+Use Existing Product
+
+Update Existing Product
+
+Create Separate Product
+
+Review
+
+---
+
+# MODULE 29 — DATABASE ARCHITECTURE
+
+Use the existing ERP production database.
+
+Do NOT create a separate temporary AI database.
+
+Suggested entities:
+
+Vendor
+
+VendorCatalogue
+
+VendorCatalogueImport
+
+VendorBrand
+
+VendorCategory
+
+VendorProduct
+
+VendorProductMapping
+
+CatalogueProduct
+
+CatalogueRate
+
+CatalogueVersion
+
+CatalogueSource
+
+WebsiteSource
+
+ProductSource
+
+BrandSource
+
+ExtractionResult
+
+ExtractionField
+
+ProductAlias
+
+VendorIntelligence
+
+RateHistory
+
+ImportBatch
+
+ImportError
+
+These should integrate with existing:
+
+Brand Master
+
+Category Master
+
+Product Master
+
+Vendor Master
+
+Requirement Management
+
+RFQ Management
+
+Quotation
+
+Purchase Order
+
+Inventory
+
+Reports
+
+---
+
+# MODULE 30 — BACKEND VALIDATION
+
+This feature must be backend/database driven.
+
+Do not make it UI-only.
+
+When catalogue analysis finishes:
+
+Frontend must receive actual backend result.
+
+When user confirms:
+
+Database transaction must complete successfully.
+
+Then backend must verify:
+
+INSERT/UPDATE
+
+↓
+
+SELECT
+
+↓
+
+confirm record exists
+
+↓
+
+return success
+
+Do not display:
+
+"Successfully Imported"
+
+unless database save has actually succeeded.
+
+---
+
+# MODULE 31 — PERFORMANCE
+
+Large vendor catalogues may contain thousands of products.
+
+Do not freeze the browser.
+
+Use background processing/job status where appropriate.
+
+Display:
+
+Uploading...
+
+Extracting...
+
+OCR Processing...
+
+Analysing Products...
+
+Matching Brands...
+
+Matching Categories...
+
+Detecting Duplicates...
+
+Comparing Catalogue...
+
+Saving...
+
+Completed
+
+Example:
+
+`2,450 products analysed`
+
+`2,110 matched`
+
+`240 new`
+
+`75 updated`
+
+`25 review required`
+
+---
+
+# MODULE 32 — SEARCHABLE VENDOR INTELLIGENCE
+
+Global Search should support:
+
+Vendor name
+
+Brand
+
+Product
+
+Part code
+
+Category
+
+Product family
+
+Catalogue
+
+Website
+
+Example search:
+
+`Siemens`
+
+should show:
+
+Vendors dealing with Siemens
+
+Products
+
+Categories
+
+Catalogue references
+
+Part codes
+
+Rates
+
+Sources
+
+---
+
+# MODULE 33 — AI CHAT IN ERP
+
+If existing ERP has AI Chat, connect it with Vendor Intelligence.
+
+Examples:
+
+"Which vendors deal in Siemens PLC?"
+
+"Which vendors supply Schneider MCB?"
+
+"What brands does ABC Electrical deal in?"
+
+"Show all vendors who deal in bearings."
+
+"Which vendor has this part number?"
+
+"Show vendors supplying this product category."
+
+Answers must come from actual ERP data.
+
+Do not hallucinate vendors.
+
+---
+
+# MODULE 34 — IMPORTANT TEST CASE — 4D TECHNOLOGY BROCHURE
+
+Use the uploaded brochure:
+
+`4d brochure.pdf`
+
+as a test case.
+
+The brochure identifies product areas including:
+
+- Instrument & Sensor
+- Proximity Sensors
+- Photoelectric Sensors
+- Rotary Encoders
+- Pressure Transmitter
+- RTD & Thermocouple
+- Limit Switch
+- Humidity Sensors
+- Level Switch
+- SMPS
+- Controllers
+- Isolators
+- SSR
+- Digital Meter
+- Transformers
+- Timers
+- Relay & Socket
+- Ethernet Switch
+- Cables
+- Switchgears
+- PLC & HMI
+- PU Gasket
+- Enclosures
+- Panel Accessories
+- Plug Socket & Tube Lights
+- Fan & Air Vents
+- Cable Gland & Conduits
+- Cable Tie / Spiral / Sticker
+- PVC & MCB Channel
+- Hooter & Tower Light
+- Industrial Plug Socket
+- Lugs & Terminals
+- Dragchain & Foot Switch
+- ABS Push Button Box
+- Mounting Bracket
+- Selector & Rotary Switch
+- PVC/Bus Bar & Ferrule
+- Labels
+- Lamp & Push Button
+
+The brochure also contains PU Gasket dimensions and enclosure/panel accessory information.
+
+Use this document to verify that the system correctly identifies the vendor's product coverage.
+
+Do not assume every listed product is a separate SKU unless the source provides a product code.
+
+---
+
+# MODULE 35 — WEBSITE + PDF VENDOR ONBOARDING
+
+New Vendor workflow should become:
+
+### STEP 1
+
+Create Vendor
+
+### STEP 2
+
+Enter Website URL
+
+### STEP 3
+
+Upload Catalogue
+
+### STEP 4
+
+Click:
+
+`ANALYSE VENDOR`
+
+### STEP 5
+
+ERP analyses:
+
+Website
+
++
+
+PDF
+
++
+
+Excel
+
++
+
+Images
+
+### STEP 6
+
+Generate:
+
+Vendor Profile
+
+Brands
+
+Categories
+
+Product Families
+
+Products
+
+Part Codes
+
+Specifications
+
+Rates
+
+Sources
+
+Confidence
+
+### STEP 7
+
+Show review screen
+
+### STEP 8
+
+User confirms
+
+### STEP 9
+
+Save to production database
+
+### STEP 10
+
+Vendor becomes searchable and available for:
+
+Requirement Matching
+
+RFQ Vendor Recommendation
+
+Catalogue Rate Matching
+
+Vendor Comparison
+
+Purchasing
+
+Reports
+
+---
+
+# MODULE 36 — REVIEW SCREEN
+
+Before saving automatically extracted information show:
+
+## Vendor Intelligence Preview
+
+Vendor:
+ABC Industrial
+
+### Brands Detected
+
+| Brand | Products | Confidence | Action |
+|---|---:|---:|---|
+| Schneider | 145 | 97% | Accept |
+| Siemens | 85 | 94% | Accept |
+| ABB | 32 | 82% | Review |
+
+### Categories
+
+| Category | Products | Confidence |
+|---|---:|---:|
+| Electrical | 240 | 96% |
+| Automation | 120 | 92% |
+| Instrumentation | 65 | 89% |
+
+### Product Extraction
+
+| Product | Brand | Part Code | Category | Source | Confidence |
+|---|---|---|---|---|---:|
+| Proximity Sensor | XYZ | XYZ-123 | Sensors | PDF p.4 | 98% |
+
+Allow:
+
+Accept
+
+Edit
+
+Ignore
+
+Merge
+
+Create New
+
+Map Existing
+
+---
+
+# MODULE 37 — VENDOR MASTER PROFILE
+
+After confirmation, Vendor Master should show:
+
+## What This Vendor Deals In
+
+### Brands
+
+Schneider Electric
+
+Siemens
+
+ABB
+
+### Categories
+
+Electrical
+
+Automation
+
+Instrumentation
+
+Panel Accessories
+
+### Product Families
+
+MCB
+
+Contactors
+
+PLC
+
+Sensors
+
+Switchgear
+
+### Product Count
+
+1,250
+
+### Catalogue Count
+
+8
+
+### Website
+
+Analysed
+
+### Last Verification
+
+12-Nov-2026
+
+### Intelligence
+
+94%
+
+---
+
+# MODULE 38 — FUTURE CATALOGUE UPDATES
+
+When vendor sends a new catalogue next year:
+
+Do NOT require manual product-by-product editing.
+
+User should simply:
+
+Vendor
+
+→ Catalogue
+
+→ Upload New Catalogue
+
+→ Analyse
+
+→ Compare
+
+→ Apply Update
+
+The ERP automatically:
+
+- Detects existing products
+- Detects new products
+- Detects changed products
+- Detects changed rates
+- Updates current catalogue
+- Creates rate history
+- Keeps old rates
+- Keeps old transactions unchanged
+- Updates vendor product mapping
+- Updates brand/category relationships
+- Updates search index
+
+---
+
+# MODULE 39 — SECURITY
+
+Only authorized users can:
+
+- Add Vendor
+- Upload Catalogue
+- Analyse Website
+- Approve extracted master data
+- Update Product Master
+- Update Brand Master
+- Apply Catalogue Updates
+- Archive Catalogue
+- Delete Import Batch
+
+Record all actions in Audit Log.
+
+Audit:
+
+User
+
+Date/time
+
+Vendor
+
+File
+
+Action
+
+Old Value
+
+New Value
+
+Source
+
+Reason
+
+---
+
+# MODULE 40 — DO NOT IMPLEMENT APPROVAL WORKFLOW NOW
+
+Do NOT activate the previously planned purchase approval workflow at this stage.
+
+This enhancement is only for:
+
+Vendor Intelligence
+
+Catalogue Analysis
+
+Website Analysis
+
+Product Identification
+
+Brand Identification
+
+Category Identification
+
+Vendor Product Mapping
+
+Catalogue Rates
+
+Rate History
+
+Requirement Matching
+
+Vendor Recommendation
+
+Keep the architecture extensible so approval can be added later.
+
+---
+
+# MODULE 41 — REQUIRED TESTING
+
+Test with:
+
+1. New vendor with PDF catalogue
+2. Vendor with Excel catalogue
+3. Vendor with scanned PDF
+4. Vendor with image catalogue
+5. Vendor with website only
+6. Vendor with PDF + website
+7. Vendor with multiple brands
+8. Vendor with same product from multiple brands
+9. Duplicate product
+10. Same part code
+11. Similar part codes
+12. Missing part code
+13. Changed catalogue rate
+14. New product in next catalogue
+15. Removed product in next catalogue
+16. Wrong catalogue upload
+17. Rollback import
+18. Website unavailable
+19. OCR failure
+20. Low-confidence extraction
+
+Verify that:
+
+- Data persists after refresh
+- Data persists after logout/login
+- Data persists after deployment/restart
+- Existing ERP records are not overwritten incorrectly
+- Historical rates remain unchanged
+- Existing RFQs/POs remain unchanged
+- Duplicate products are not silently created
+- Low-confidence results are not automatically accepted
+
+---
+
+# MODULE 42 — FINAL ACCEPTANCE CRITERIA
+
+This enhancement is complete only when I can:
+
+1. Add a new vendor.
+2. Enter vendor website.
+3. Upload vendor PDF catalogue.
+4. Click `Analyse Vendor`.
+5. ERP automatically identifies brands.
+6. ERP automatically identifies categories.
+7. ERP automatically identifies product families.
+8. ERP automatically extracts products.
+9. ERP automatically extracts part/model numbers.
+10. ERP automatically extracts specifications.
+11. ERP identifies catalogue rates when available.
+12. ERP links products to existing Product Master where possible.
+13. ERP creates Vendor Product Mapping.
+14. ERP shows confidence.
+15. ERP shows source/page.
+16. ERP allows correction before saving.
+17. ERP saves confirmed information to production database.
+18. Vendor becomes searchable.
+19. Requirement matching can use the new vendor intelligence.
+20. RFQ vendor recommendation can use the new vendor intelligence.
+21. A new catalogue can be uploaded later with one operation.
+22. ERP automatically detects changed/new products.
+23. ERP automatically updates current catalogue information.
+24. Old catalogue/rates remain available as history.
+25. Old RFQs/POs/transactions do not change.
+26. Bulk catalogue import can be archived/rolled back safely.
+27. Website analysis works independently from PDF upload.
+28. PDF + website information can be combined.
+29. No fake brands/products/rates are generated.
+30. All important actions are audit logged.
+
+---
+
+# CRITICAL DEVELOPMENT INSTRUCTION
+
+Before writing code:
+
+1. Inspect the existing ERP architecture.
+2. Identify existing Vendor Master.
+3. Identify Brand Master.
+4. Identify Category Master.
+5. Identify Product Master.
+6. Identify Vendor Product Mapping.
+7. Identify catalogue import services.
+8. Identify database schema.
+9. Identify backend APIs.
+10. Identify authentication/permissions.
+11. Identify existing AI services.
+12. Identify existing document/PDF processing.
+13. Identify existing OCR capability.
+14. Identify existing search/indexing.
+15. Identify existing Requirement/RFQ vendor recommendation logic.
+
+Do not duplicate existing functionality.
+
+Extend existing services where possible.
+
+Use existing database entities where possible.
+
+Do not create parallel disconnected vendor/product databases.
+
+Do not replace existing production data with mock/demo data.
+
+Do not claim a feature is complete based only on frontend UI.
+
+Verify every important operation through the actual backend/database.
+
+After implementation provide a technical completion report containing:
+
+- Files changed
+- Database tables/columns changed
+- APIs added/changed
+- Catalogue extraction process
+- Website analysis process
+- Matching algorithm
+- Brand identification logic
+- Category identification logic
+- Product matching logic
+- Rate extraction logic
+- Rate history logic
+- Vendor-product mapping logic
+- Duplicate handling
+- Confidence calculation
+- Source traceability
+- Security/permissions
+- Audit logging
+- Tests performed
+- Known limitations
+- Any migration required
+- Any environment variables/API keys required
+
+IMPORTANT:
+
+Do not hide errors.
+
+If PDF extraction fails, report the exact reason.
+
+If website analysis fails, report the exact reason.
+
+If database save fails, report the exact backend/database error.
+
+If a product cannot be confidently identified, mark it for review instead of guessing.
+
+The final system must be a **production-ready Vendor Intelligence and Catalogue Automation module integrated into the existing MRO PROCUREMENT SOLUTION ERP**, not a demo or standalone prototype.
