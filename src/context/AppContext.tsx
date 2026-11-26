@@ -61,6 +61,11 @@ import {
 } from '../services/backupRecoveryService';
 import { recommendCategoryForRequirement, recommendVendorsForRequirement } from '../services/categoryMatchingService';
 import {
+  isStaticSpaFallbackResponse,
+  isStaticSpaMode,
+  markStaticSpaMode,
+} from '../utils/staticSpaRuntime';
+import {
   INITIAL_USERS,
   INITIAL_CUSTOMERS,
   INITIAL_VENDORS,
@@ -547,6 +552,7 @@ interface AppContextType {
   pushDeviceDataToCentralDb: () => Promise<{ success: boolean; message: string }>;
   exportTeamSyncSnapshot: () => string;
   importTeamSyncSnapshot: (raw: string) => { success: boolean; count: number; message: string };
+  resetSampleMroData: () => { success: boolean; message: string };
   isSyncing: boolean;
   lastSyncTime: Date;
   isOnline: boolean;
@@ -1873,6 +1879,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: str
       }
       isSyncInFlightRef.current = true;
 
+      const ensureStaticSpaSeedData = () => {
+        try {
+          const seedReqs = [
+            INITIAL_REQUIREMENT_001,
+            INITIAL_REQUIREMENT_002,
+            INITIAL_REQUIREMENT_003,
+            INITIAL_REQUIREMENT_004,
+          ];
+          const seedVendorPos = [INITIAL_VENDOR_PO_001, INITIAL_VENDOR_PO_002];
+          if (localStorage.getItem('erp_live_vendors') === null) {
+            setVendors(INITIAL_VENDORS);
+            localStorage.setItem('erp_live_vendors', JSON.stringify(INITIAL_VENDORS));
+          }
+          if (localStorage.getItem('erp_live_products') === null) {
+            setProducts(INITIAL_PRODUCTS);
+            localStorage.setItem('erp_live_products', JSON.stringify(INITIAL_PRODUCTS));
+          }
+          if (localStorage.getItem('erp_live_requirements') === null) {
+            setRequirements(seedReqs);
+            localStorage.setItem('erp_live_requirements', JSON.stringify(seedReqs));
+          }
+          if (localStorage.getItem('erp_live_vendor_pos') === null) {
+            setVendorPOs(seedVendorPos);
+            localStorage.setItem('erp_live_vendor_pos', JSON.stringify(seedVendorPos));
+          }
+        } catch {}
+      };
+
+      if (isStaticSpaMode()) {
+        ensureStaticSpaSeedData();
+        setIsSyncing(false);
+        return;
+      }
+
       try {
         if (opts?.notify) setIsSyncing(true);
         // Drain any offline/queued mutations BEFORE pulling central DB state so new records never vanish
@@ -1887,6 +1927,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: str
             ? `?rev=${encodeURIComponent(String(lastServerRevisionRef.current))}`
             : '';
         const res = await fetchApi(`/api/sync/state${revQuery}`, { timeoutMs: 25000 });
+        if (isStaticSpaFallbackResponse(res)) {
+          markStaticSpaMode(true);
+          ensureStaticSpaSeedData();
+          setIsSyncing(false);
+          return;
+        }
         if (!res.ok) {
           setIsSyncing(false);
           return;
@@ -2849,30 +2895,55 @@ export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: str
       throw new Error(`Vendor "${existing.companyName}" (${existing.id}) already exists with this name or GSTIN.`);
     }
 
-    const res = await fetchApi('/api/vendors', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-erp-user': currentUser.name,
-        'x-erp-role': currentUser.role,
-      },
-      body: JSON.stringify({
+    let savedVendor: Vendor;
+    if (isStaticSpaMode()) {
+      const localId = nextSequenceId('VEND', [...vendors, ...archivedVendors], 'erp_deleted_vendors');
+      savedVendor = {
         ...vendData,
-        mode: 'CREATE',
-        userName: currentUser.name,
-        userRole: currentUser.role,
-      }),
-      timeoutMs: 25000,
-    });
+        id: localId,
+        vendorCode: (vendData as any).vendorCode || localId,
+        status: vendData.status || 'ACTIVE',
+        isDeleted: false,
+        createdAt: new Date().toISOString().split('T')[0],
+      } as Vendor;
+    } else {
+      const res = await fetchApi('/api/vendors', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-erp-user': currentUser.name,
+          'x-erp-role': currentUser.role,
+        },
+        body: JSON.stringify({
+          ...vendData,
+          mode: 'CREATE',
+          userName: currentUser.name,
+          userRole: currentUser.role,
+        }),
+        timeoutMs: 25000,
+      });
 
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.success || !data.verified || !data.vendor) {
-      throw new Error(data.error || `Failed to save vendor to database (HTTP ${res.status}).`);
-    }
-
-    const savedVendor: Vendor = data.vendor;
-    if (typeof data.revision === 'number') {
-      lastServerRevisionRef.current = data.revision;
+      if (isStaticSpaFallbackResponse(res)) {
+        markStaticSpaMode(true);
+        const localId = nextSequenceId('VEND', [...vendors, ...archivedVendors], 'erp_deleted_vendors');
+        savedVendor = {
+          ...vendData,
+          id: localId,
+          vendorCode: (vendData as any).vendorCode || localId,
+          status: vendData.status || 'ACTIVE',
+          isDeleted: false,
+          createdAt: new Date().toISOString().split('T')[0],
+        } as Vendor;
+      } else {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success || !data.verified || !data.vendor) {
+          throw new Error(data.error || `Failed to save vendor to database (HTTP ${res.status}).`);
+        }
+        savedVendor = data.vendor;
+        if (typeof data.revision === 'number') {
+          lastServerRevisionRef.current = data.revision;
+        }
+      }
     }
     markLocalWrite('vendor', savedVendor.id);
     removeTombstoneIds('erp_deleted_vendors', [savedVendor.id]);
@@ -3051,29 +3122,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: str
   };
 
   const updateVendor = async (updated: Vendor): Promise<Vendor> => {
-    const res = await fetchApi(`/api/vendors/${encodeURIComponent(updated.id)}`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-erp-user': currentUser.name,
-        'x-erp-role': currentUser.role,
-      },
-      body: JSON.stringify({
-        ...updated,
-        userName: currentUser.name,
-        userRole: currentUser.role,
-      }),
-      timeoutMs: 25000,
-    });
+    let savedVendor: Vendor;
+    if (isStaticSpaMode()) {
+      savedVendor = { ...updated, updatedAt: new Date().toISOString() } as Vendor;
+    } else {
+      const res = await fetchApi(`/api/vendors/${encodeURIComponent(updated.id)}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-erp-user': currentUser.name,
+          'x-erp-role': currentUser.role,
+        },
+        body: JSON.stringify({
+          ...updated,
+          userName: currentUser.name,
+          userRole: currentUser.role,
+        }),
+        timeoutMs: 25000,
+      });
 
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.success || !data.verified || !data.vendor) {
-      throw new Error(data.error || `Failed to update vendor in database (HTTP ${res.status}).`);
-    }
+      if (isStaticSpaFallbackResponse(res)) {
+        markStaticSpaMode(true);
+        savedVendor = { ...updated, updatedAt: new Date().toISOString() } as Vendor;
+      } else {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success || !data.verified || !data.vendor) {
+          throw new Error(data.error || `Failed to update vendor in database (HTTP ${res.status}).`);
+        }
 
-    const savedVendor: Vendor = data.vendor;
-    if (typeof data.revision === 'number') {
-      lastServerRevisionRef.current = data.revision;
+        savedVendor = data.vendor;
+        if (typeof data.revision === 'number') {
+          lastServerRevisionRef.current = data.revision;
+        }
+      }
     }
     markLocalWrite('vendor', savedVendor.id);
     removeTombstoneIds('erp_deleted_vendors', [savedVendor.id]);
@@ -3105,25 +3186,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: str
     const target = vendors.find((v) => v.id === id) || archivedVendors.find((v) => v.id === id);
     const delReason = reason || 'User Archived Vendor';
     try {
-      const res = await fetchApi(`/api/vendors/${encodeURIComponent(id)}`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason: delReason, user: currentUser.name }),
-        timeoutMs: 25000,
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data?.success) {
-        pushNotification(
-          'Archive Failed',
-          data?.error || `Database rejected vendor archive (HTTP ${res.status}).`,
-          'WARNING',
-          ['SUPER_ADMIN']
-        );
-        return false;
-      }
-
-      if (typeof data.revision === 'number') {
-        lastServerRevisionRef.current = data.revision;
+      let data: any = { success: true };
+      if (!isStaticSpaMode()) {
+        const res = await fetchApi(`/api/vendors/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason: delReason, user: currentUser.name }),
+          timeoutMs: 25000,
+        });
+        if (isStaticSpaFallbackResponse(res)) {
+          markStaticSpaMode(true);
+        } else {
+          data = await res.json().catch(() => ({}));
+          if (!res.ok || !data?.success) {
+            pushNotification(
+              'Archive Failed',
+              data?.error || `Database rejected vendor archive (HTTP ${res.status}).`,
+              'WARNING',
+              ['SUPER_ADMIN']
+            );
+            return false;
+          }
+          if (typeof data.revision === 'number') {
+            lastServerRevisionRef.current = data.revision;
+          }
+        }
       }
       removeTombstoneIds('erp_deleted_vendors', [id]);
       const archivedItem: Vendor | null =
@@ -3174,25 +3261,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: str
   const restoreVendor = async (id: string): Promise<boolean> => {
     const target = archivedVendors.find((v) => v.id === id) || vendors.find((v) => v.id === id);
     try {
-      const res = await fetchApi(`/api/vendors/${encodeURIComponent(id)}/restore`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user: currentUser.name }),
-        timeoutMs: 25000,
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data?.success) {
-        pushNotification(
-          'Restore Failed',
-          data?.error || `Could not restore vendor on server (HTTP ${res.status}).`,
-          'WARNING',
-          ['SUPER_ADMIN']
-        );
-        return false;
-      }
-
-      if (typeof data.revision === 'number') {
-        lastServerRevisionRef.current = data.revision;
+      let data: any = { success: true };
+      if (!isStaticSpaMode()) {
+        const res = await fetchApi(`/api/vendors/${encodeURIComponent(id)}/restore`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user: currentUser.name }),
+          timeoutMs: 25000,
+        });
+        if (isStaticSpaFallbackResponse(res)) {
+          markStaticSpaMode(true);
+        } else {
+          data = await res.json().catch(() => ({}));
+          if (!res.ok || !data?.success) {
+            pushNotification(
+              'Restore Failed',
+              data?.error || `Could not restore vendor on server (HTTP ${res.status}).`,
+              'WARNING',
+              ['SUPER_ADMIN']
+            );
+            return false;
+          }
+          if (typeof data.revision === 'number') {
+            lastServerRevisionRef.current = data.revision;
+          }
+        }
       }
       markLocalWrite('vendor', id);
       removeTombstoneIds('erp_deleted_vendors', [id]);
@@ -3244,25 +3337,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: str
   const permanentlyDeleteVendor = async (id: string): Promise<boolean> => {
     const target = archivedVendors.find((v) => v.id === id) || vendors.find((v) => v.id === id);
     try {
-      const res = await fetchApi(`/api/vendors/${encodeURIComponent(id)}?permanent=true`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ permanent: true, user: currentUser.name }),
-        timeoutMs: 25000,
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data?.success) {
-        pushNotification(
-          'Permanent Delete Failed',
-          data?.error || `Database rejected permanent vendor removal (HTTP ${res.status}).`,
-          'WARNING',
-          ['SUPER_ADMIN']
-        );
-        return false;
-      }
-
-      if (typeof data.revision === 'number') {
-        lastServerRevisionRef.current = data.revision;
+      if (!isStaticSpaMode()) {
+        const res = await fetchApi(`/api/vendors/${encodeURIComponent(id)}?permanent=true`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ permanent: true, user: currentUser.name }),
+          timeoutMs: 25000,
+        });
+        if (isStaticSpaFallbackResponse(res)) {
+          markStaticSpaMode(true);
+        } else {
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data?.success) {
+            pushNotification(
+              'Permanent Delete Failed',
+              data?.error || `Database rejected permanent vendor removal (HTTP ${res.status}).`,
+              'WARNING',
+              ['SUPER_ADMIN']
+            );
+            return false;
+          }
+          if (typeof data.revision === 'number') {
+            lastServerRevisionRef.current = data.revision;
+          }
+        }
       }
       markLocalDelete('vendor', id);
       addTombstoneIds('erp_deleted_vendors', [id]);
@@ -8138,6 +8236,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: str
     return JSON.stringify(snapshot, null, 2);
   };
 
+  const resetSampleMroData = (): { success: boolean; message: string } => {
+    try {
+      const seedReqs = [
+        INITIAL_REQUIREMENT_001,
+        INITIAL_REQUIREMENT_002,
+        INITIAL_REQUIREMENT_003,
+        INITIAL_REQUIREMENT_004,
+      ];
+      const seedVendorPos = [INITIAL_VENDOR_PO_001, INITIAL_VENDOR_PO_002];
+      setVendors(INITIAL_VENDORS);
+      setArchivedVendors([]);
+      setProducts(INITIAL_PRODUCTS);
+      setCustomers(INITIAL_CUSTOMERS);
+      setCompanies(INITIAL_COMPANIES);
+      setPurchaseExecutives(INITIAL_PURCHASE_EXECUTIVES);
+      setRequirements(seedReqs);
+      setVendorPOs(seedVendorPos);
+      localStorage.removeItem('erp_deleted_vendors');
+      localStorage.removeItem('erp_deleted_products');
+      localStorage.removeItem('erp_deleted_requirements');
+      localStorage.setItem('erp_live_vendors', JSON.stringify(INITIAL_VENDORS));
+      localStorage.setItem('erp_live_archived_vendors', JSON.stringify([]));
+      localStorage.setItem('erp_live_products', JSON.stringify(INITIAL_PRODUCTS));
+      localStorage.setItem('erp_live_customers', JSON.stringify(INITIAL_CUSTOMERS));
+      localStorage.setItem('erp_live_companies', JSON.stringify(INITIAL_COMPANIES));
+      localStorage.setItem('erp_live_requirements', JSON.stringify(seedReqs));
+      localStorage.setItem('erp_live_vendor_pos', JSON.stringify(seedVendorPos));
+      pushNotification(
+        'Sample MRO Data Restored',
+        `Loaded ${INITIAL_VENDORS.length} vendors, ${INITIAL_PRODUCTS.length} catalog items, and sample procurement workflows into browser storage.`,
+        'SUCCESS',
+        ['SUPER_ADMIN', 'PROCUREMENT_EMPLOYEE']
+      );
+      return { success: true, message: 'Sample MRO procurement data restored cleanly.' };
+    } catch (err: any) {
+      return { success: false, message: err?.message || 'Unable to reset sample data.' };
+    }
+  };
+
   const importTeamSyncSnapshot = (raw: string): { success: boolean; count: number; message: string } => {
     try {
       let data: any;
@@ -8434,6 +8571,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: str
         pushDeviceDataToCentralDb,
         exportTeamSyncSnapshot,
         importTeamSyncSnapshot,
+        resetSampleMroData,
         isSyncing,
         lastSyncTime,
         isOnline,

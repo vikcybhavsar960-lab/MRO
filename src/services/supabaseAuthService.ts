@@ -1,6 +1,14 @@
 import { supabase, getSupabaseConfigStatus } from '../lib/supabase';
 import { fetchApi, clearAuthSession, getCurrentSessionId } from '../utils/apiClient';
 import { normalizeUserRole } from '../utils/roleUtils';
+import {
+  authenticateStaticSpaUser,
+  isStaticSpaFallbackResponse,
+  isStaticSpaMode,
+  isStaticSpaSessionToken,
+  markStaticSpaMode,
+  restoreStaticSpaSession,
+} from '../utils/staticSpaRuntime';
 import { User } from '../types';
 
 export interface AuthenticatedSessionResult {
@@ -8,7 +16,7 @@ export interface AuthenticatedSessionResult {
   user: User | null;
   sessionId?: string;
   mustChangePassword?: boolean;
-  authProvider: 'supabase' | 'erp-session' | 'none';
+  authProvider: 'supabase' | 'erp-session' | 'static-spa' | 'none';
   error?: string;
 }
 
@@ -28,10 +36,25 @@ function mapRawUserToErpUser(raw: any): User {
   };
 }
 
+function persistLocalSessionState(user: User, sessionToken?: string) {
+  if (typeof window === 'undefined') return;
+  try {
+    if (sessionToken) {
+      sessionStorage.setItem('mro_current_session_id', sessionToken);
+      localStorage.setItem('mro_current_session_id', sessionToken);
+    }
+    localStorage.setItem('procure_user', JSON.stringify(user));
+    localStorage.removeItem('mro_is_logged_out');
+    window.dispatchEvent(new CustomEvent('mro_session_ready'));
+  } catch {}
+}
+
 /**
  * Authenticates via Username or Email + Password.
  * Bridges legacy PBKDF2 accounts safely into Supabase Auth on login and establishes
  * both the Supabase JWT session and ERP session state.
+ * When hosted as a pure static SPA (e.g. Cloudflare Workers *.workers.dev with no Express API),
+ * seamlessly authenticates via client-side static SPA mode.
  */
 export async function loginWithErpAndSupabase(
   usernameOrEmail: string,
@@ -43,56 +66,70 @@ export async function loginWithErpAndSupabase(
   mustChangePassword?: boolean;
   error?: string;
 }> {
-  const res = await fetchApi('/api/auth/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      username: usernameOrEmail.trim(),
-      password: password.trim(),
-    }),
-    timeoutMs: 12000,
-  });
+  if (!isStaticSpaMode()) {
+    const res = await fetchApi('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: usernameOrEmail.trim(),
+        password: password.trim(),
+      }),
+      timeoutMs: 12000,
+    });
 
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
+    if (!isStaticSpaFallbackResponse(res)) {
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return {
+          success: false,
+          error: data.error || 'Invalid username or password',
+        };
+      }
+
+      markStaticSpaMode(false);
+
+      // Hydrate frontend Supabase client session if server issued Supabase JWT tokens
+      if (supabase && data.supabaseSession?.access_token && data.supabaseSession?.refresh_token) {
+        try {
+          await supabase.auth.setSession({
+            access_token: data.supabaseSession.access_token,
+            refresh_token: data.supabaseSession.refresh_token,
+          });
+        } catch (e) {
+          console.warn('[Supabase Auth] setSession warning:', e);
+        }
+      }
+
+      const user = mapRawUserToErpUser(data.user);
+      const sessionToken = data.supabaseSession?.access_token || data.sessionId;
+      persistLocalSessionState(user, sessionToken);
+
+      return {
+        success: true,
+        user,
+        sessionId: sessionToken,
+        mustChangePassword: Boolean(data.mustChangePassword),
+      };
+    }
+
+    markStaticSpaMode(true);
+  }
+
+  // Static SPA Mode (Cloudflare Workers / Cloudflare Pages / static ./dist preview)
+  const staticAuth = authenticateStaticSpaUser(usernameOrEmail, password);
+  if (!staticAuth.success || !staticAuth.user || !staticAuth.sessionId) {
     return {
       success: false,
-      error: data.error || 'Invalid username or password',
+      error: staticAuth.error || 'Invalid username or password',
     };
   }
 
-  // Hydrate frontend Supabase client session if server issued Supabase JWT tokens
-  if (supabase && data.supabaseSession?.access_token && data.supabaseSession?.refresh_token) {
-    try {
-      await supabase.auth.setSession({
-        access_token: data.supabaseSession.access_token,
-        refresh_token: data.supabaseSession.refresh_token,
-      });
-    } catch (e) {
-      console.warn('[Supabase Auth] setSession warning:', e);
-    }
-  }
-
-  const user = mapRawUserToErpUser(data.user);
-  const sessionToken = data.supabaseSession?.access_token || data.sessionId;
-
-  if (typeof window !== 'undefined') {
-    try {
-      if (sessionToken) {
-        sessionStorage.setItem('mro_current_session_id', sessionToken);
-        localStorage.setItem('mro_current_session_id', sessionToken);
-      }
-      localStorage.setItem('procure_user', JSON.stringify(user));
-      localStorage.removeItem('mro_is_logged_out');
-      window.dispatchEvent(new CustomEvent('mro_session_ready'));
-    } catch {}
-  }
-
+  persistLocalSessionState(staticAuth.user, staticAuth.sessionId);
   return {
     success: true,
-    user,
-    sessionId: sessionToken,
-    mustChangePassword: Boolean(data.mustChangePassword),
+    user: staticAuth.user,
+    sessionId: staticAuth.sessionId,
+    mustChangePassword: false,
   };
 }
 
@@ -111,7 +148,24 @@ export async function restoreVerifiedSession(): Promise<AuthenticatedSessionResu
   }
 
   let bearerToken: string | null = getCurrentSessionId();
-  let authProvider: 'supabase' | 'erp-session' | 'none' = 'none';
+  let authProvider: 'supabase' | 'erp-session' | 'static-spa' | 'none' = 'none';
+
+  // Fast-path restore for existing static SPA sessions (Cloudflare Workers ./dist mode)
+  if (isStaticSpaSessionToken(bearerToken)) {
+    markStaticSpaMode(true);
+    const restored = restoreStaticSpaSession(bearerToken, localStorage.getItem('procure_user'));
+    if (restored.authenticated && restored.user) {
+      return {
+        authenticated: true,
+        user: restored.user,
+        sessionId: bearerToken || undefined,
+        mustChangePassword: false,
+        authProvider: 'static-spa',
+      };
+    }
+    clearAuthSession();
+    return { authenticated: false, user: null, authProvider: 'none' };
+  }
 
   // 1. Check live Supabase Auth session first when configured
   if (supabase && getSupabaseConfigStatus().configured) {
@@ -138,9 +192,32 @@ export async function restoreVerifiedSession(): Promise<AuthenticatedSessionResu
       },
       timeoutMs: 8000,
     });
+
+    if (isStaticSpaFallbackResponse(res)) {
+      markStaticSpaMode(true);
+      const storedRaw = localStorage.getItem('procure_user');
+      if (storedRaw) {
+        try {
+          const parsed = JSON.parse(storedRaw);
+          if (parsed && parsed.id && parsed.username) {
+            return {
+              authenticated: true,
+              user: mapRawUserToErpUser(parsed),
+              sessionId: bearerToken,
+              mustChangePassword: false,
+              authProvider: 'static-spa',
+            };
+          }
+        } catch {}
+      }
+      clearAuthSession();
+      return { authenticated: false, user: null, authProvider: 'none' };
+    }
+
     const data = await res.json().catch(() => ({}));
 
     if (res.ok && data?.valid && data?.user) {
+      markStaticSpaMode(false);
       const user = mapRawUserToErpUser(data.user);
       try {
         localStorage.setItem('procure_user', JSON.stringify(user));

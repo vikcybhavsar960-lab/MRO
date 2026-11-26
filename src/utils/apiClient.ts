@@ -1,5 +1,6 @@
 // Universal Authoritative API Client for MRO Procurement ERP
 // Ensures Cloudflare Workers, Google Cloud Run, and Localhost connect to the same central database
+import { isStaticSpaMode } from './staticSpaRuntime';
 
 declare global {
   interface Window {
@@ -183,7 +184,7 @@ export const subscribeToSyncEvents = (onEvent: (event: { type: string; data?: an
   let closed = false;
 
   const connect = () => {
-    if (closed || es) return;
+    if (closed || es || isStaticSpaMode()) return;
     const sessionId = getCurrentSessionId();
     const isLoggedOut = localStorage.getItem('mro_is_logged_out') === 'true';
     if (!sessionId || isLoggedOut) return;
