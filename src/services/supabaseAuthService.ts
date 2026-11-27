@@ -2,6 +2,7 @@ import { supabase, getSupabaseConfigStatus } from '../lib/supabase';
 import { fetchApi, clearAuthSession, getCurrentSessionId } from '../utils/apiClient';
 import { normalizeUserRole } from '../utils/roleUtils';
 import {
+  STATIC_SPA_ACCOUNTS,
   authenticateStaticSpaUser,
   isStaticSpaFallbackResponse,
   isStaticSpaMode,
@@ -9,6 +10,7 @@ import {
   markStaticSpaMode,
   restoreStaticSpaSession,
 } from '../utils/staticSpaRuntime';
+import { fetchAuthenticatedSupabaseUserProfile } from './supabaseClientDataService';
 import { User } from '../types';
 
 export interface AuthenticatedSessionResult {
@@ -49,12 +51,30 @@ function persistLocalSessionState(user: User, sessionToken?: string) {
   } catch {}
 }
 
+function resolveEmailCandidatesForSupabaseLogin(usernameOrEmail: string): string[] {
+  const clean = usernameOrEmail.trim().toLowerCase();
+  if (!clean) return [];
+  if (clean.includes('@')) {
+    if (clean === 'vickybhavsar960@gmail.com') return [clean, 'vikcybhavsar960@gmail.com'];
+    if (clean === 'vikcybhavsar960@gmail.com') return [clean, 'vickybhavsar960@gmail.com'];
+    return [clean];
+  }
+  const matched = STATIC_SPA_ACCOUNTS.find((a) => a.username.toLowerCase() === clean);
+  if (matched) {
+    const base = matched.email.toLowerCase();
+    if (base === 'vickybhavsar960@gmail.com') return [base, 'vikcybhavsar960@gmail.com'];
+    return [base];
+  }
+  return [];
+}
+
 /**
  * Authenticates via Username or Email + Password.
- * Bridges legacy PBKDF2 accounts safely into Supabase Auth on login and establishes
- * both the Supabase JWT session and ERP session state.
- * When hosted as a pure static SPA (e.g. Cloudflare Workers *.workers.dev with no Express API),
- * seamlessly authenticates via client-side static SPA mode.
+ * 1. On full-stack Express deployments: calls /api/auth/login and hydrates Supabase JWT session.
+ * 2. On Cloudflare Workers static SPA (*.workers.dev): authenticates directly against
+ *    Supabase Auth (`supabase.auth.signInWithPassword`) and loads `public.user_profiles`
+ *    under RLS whenever `VITE_SUPABASE_PUBLISHABLE_KEY` is present in the build.
+ * 3. Falls back to offline static SPA accounts only if Supabase publishable key is not configured.
  */
 export async function loginWithErpAndSupabase(
   usernameOrEmail: string,
@@ -115,7 +135,44 @@ export async function loginWithErpAndSupabase(
     markStaticSpaMode(true);
   }
 
-  // Static SPA Mode (Cloudflare Workers / Cloudflare Pages / static ./dist preview)
+  // Static SPA / Cloudflare Workers Mode:
+  // Authenticate directly with Supabase Auth whenever the production publishable key is configured!
+  if (supabase && getSupabaseConfigStatus().configured) {
+    const emailCandidates = resolveEmailCandidatesForSupabaseLogin(usernameOrEmail);
+    let lastAuthError = '';
+
+    for (const candidateEmail of emailCandidates) {
+      const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({
+        email: candidateEmail,
+        password: password.trim(),
+      });
+      if (!signInErr && signInData?.session?.access_token) {
+        const profileRes = await fetchAuthenticatedSupabaseUserProfile();
+        if (profileRes.authenticated && profileRes.user) {
+          persistLocalSessionState(profileRes.user, signInData.session.access_token);
+          return {
+            success: true,
+            user: profileRes.user,
+            sessionId: signInData.session.access_token,
+            mustChangePassword: Boolean(profileRes.user.mustChangePassword),
+          };
+        }
+        lastAuthError = profileRes.error || 'Authenticated with Supabase, but user_profiles record could not be loaded.';
+        break;
+      }
+      lastAuthError = signInErr?.message || 'Invalid credentials';
+    }
+
+    // If user entered a real Supabase email and Supabase rejected credentials, return the real Supabase Auth error
+    if (usernameOrEmail.includes('@') || lastAuthError.toLowerCase().includes('invalid')) {
+      return {
+        success: false,
+        error: lastAuthError || 'Invalid email or password (Supabase Auth).',
+      };
+    }
+  }
+
+  // Offline / Unconfigured Build Fallback (only when VITE_SUPABASE_PUBLISHABLE_KEY is not injected at build time)
   const staticAuth = authenticateStaticSpaUser(usernameOrEmail, password);
   if (!staticAuth.success || !staticAuth.user || !staticAuth.sessionId) {
     return {
@@ -150,8 +207,21 @@ export async function restoreVerifiedSession(): Promise<AuthenticatedSessionResu
   let bearerToken: string | null = getCurrentSessionId();
   let authProvider: 'supabase' | 'erp-session' | 'static-spa' | 'none' = 'none';
 
-  // Fast-path restore for existing static SPA sessions (Cloudflare Workers ./dist mode)
-  if (isStaticSpaSessionToken(bearerToken)) {
+  // 1. Check live Supabase Auth session first whenever configured
+  if (supabase && getSupabaseConfigStatus().configured) {
+    try {
+      const { data } = await supabase.auth.getSession();
+      if (data?.session?.access_token) {
+        bearerToken = data.session.access_token;
+        authProvider = 'supabase';
+        sessionStorage.setItem('mro_current_session_id', bearerToken);
+        localStorage.setItem('mro_current_session_id', bearerToken);
+      }
+    } catch {}
+  }
+
+  // Fast-path restore for offline static SPA sessions (when no Supabase Auth JWT exists)
+  if (authProvider !== 'supabase' && isStaticSpaSessionToken(bearerToken)) {
     markStaticSpaMode(true);
     const restored = restoreStaticSpaSession(bearerToken, localStorage.getItem('procure_user'));
     if (restored.authenticated && restored.user) {
@@ -165,19 +235,6 @@ export async function restoreVerifiedSession(): Promise<AuthenticatedSessionResu
     }
     clearAuthSession();
     return { authenticated: false, user: null, authProvider: 'none' };
-  }
-
-  // 1. Check live Supabase Auth session first when configured
-  if (supabase && getSupabaseConfigStatus().configured) {
-    try {
-      const { data } = await supabase.auth.getSession();
-      if (data?.session?.access_token) {
-        bearerToken = data.session.access_token;
-        authProvider = 'supabase';
-        sessionStorage.setItem('mro_current_session_id', bearerToken);
-        localStorage.setItem('mro_current_session_id', bearerToken);
-      }
-    } catch {}
   }
 
   if (!bearerToken) {
@@ -195,6 +252,29 @@ export async function restoreVerifiedSession(): Promise<AuthenticatedSessionResu
 
     if (isStaticSpaFallbackResponse(res)) {
       markStaticSpaMode(true);
+
+      // In Cloudflare Workers SPA mode with active Supabase Auth, verify against live Supabase + user_profiles!
+      if (supabase && getSupabaseConfigStatus().configured) {
+        const profileRes = await fetchAuthenticatedSupabaseUserProfile();
+        if (profileRes.authenticated && profileRes.user && profileRes.accessToken) {
+          persistLocalSessionState(profileRes.user, profileRes.accessToken);
+          return {
+            authenticated: true,
+            user: profileRes.user,
+            sessionId: profileRes.accessToken,
+            mustChangePassword: Boolean(profileRes.user.mustChangePassword),
+            authProvider: 'supabase',
+          };
+        }
+        clearAuthSession();
+        return {
+          authenticated: false,
+          user: null,
+          authProvider: 'none',
+          error: profileRes.error || 'Supabase session expired. Please sign in again.',
+        };
+      }
+
       const storedRaw = localStorage.getItem('procure_user');
       if (storedRaw) {
         try {

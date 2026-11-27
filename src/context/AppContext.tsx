@@ -66,6 +66,12 @@ import {
   markStaticSpaMode,
 } from '../utils/staticSpaRuntime';
 import {
+  fetchLiveStateFromSupabaseClient,
+  runLiveSupabaseProductionTest,
+  upsertRequirementToSupabaseClient,
+  upsertVendorToSupabaseClient,
+} from '../services/supabaseClientDataService';
+import {
   INITIAL_USERS,
   INITIAL_CUSTOMERS,
   INITIAL_VENDORS,
@@ -222,6 +228,9 @@ interface AppContextType {
     rfqNumber?: string;
     requirementSource?: 'Email' | 'WhatsApp' | 'Phone' | 'Manual' | 'Other' | string;
     referenceNumber?: string;
+    emailSubject?: string;
+    originalEmailText?: string;
+    sourceEmailId?: string;
   }) => CustomerRequirement;
   updateRequirement: (req: CustomerRequirement) => void;
   deleteRequirement: (id: string, reason?: string) => { success: boolean; message: string };
@@ -1738,15 +1747,64 @@ export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: str
     }
     const runProbe = (async () => {
       try {
+        const clientCfg = getSupabaseConfigStatus();
+        const activeUser = currentUserRef.current;
+
+        const runDirectClientSupabaseProbe = async () => {
+          const report = await runLiveSupabaseProductionTest({ includeWriteRoundTrip: false });
+          const connected = Boolean(report.connected);
+          setCloudSyncState((prev) => ({
+            ...prev,
+            connected,
+            schemaApplied: connected,
+            serverConfigured: report.hasPublishableKey,
+            status: connected ? 'CLOUD_CONNECTED' : 'LOCAL_ONLY',
+            email: report.sessionEmail || activeUser?.email || prev.email,
+            uid: activeUser?.id || prev.uid,
+            isAdmin: isSuperAdminUser(activeUser),
+            projectId: 'plvjsiehhpdoyvzgahpr',
+            databaseId: 'postgresql',
+            error: connected
+              ? null
+              : !report.hasPublishableKey
+                ? 'VITE_SUPABASE_PUBLISHABLE_KEY is not injected in this Cloudflare Workers build. Add it under Workers Settings -> Build -> Variables and secrets, then redeploy.'
+                : report.rlsError ||
+                  (!report.sessionAuthenticated
+                    ? 'Sign in with a Supabase Auth account to read/write live Supabase tables under RLS.'
+                    : 'Unable to verify live Supabase database connection.'),
+            lastCloudSyncAt: connected ? new Date() : prev.lastCloudSyncAt,
+          }));
+          return {
+            connected,
+            data: {
+              connected,
+              schemaApplied: connected,
+              serverConfigured: report.hasPublishableKey,
+              projectRef: 'plvjsiehhpdoyvzgahpr',
+              counts: report.counts,
+              missingEnv: report.missingVars,
+              error: connected ? null : report.rlsError,
+              directClientReport: report,
+            },
+          };
+        };
+
+        if (isStaticSpaMode()) {
+          return await runDirectClientSupabaseProbe();
+        }
+
         const res = await fetchApi(forceRefresh ? '/api/supabase/status?refresh=1' : '/api/supabase/status', {
           timeoutMs: 25000,
         });
+        if (isStaticSpaFallbackResponse(res)) {
+          markStaticSpaMode(true);
+          return await runDirectClientSupabaseProbe();
+        }
+
         const data = await res.json().catch(() => ({}));
         const connected = Boolean(res.ok && data?.connected);
         const schemaApplied = Boolean(data?.schemaApplied);
         const serverConfigured = Boolean(data?.serverConfigured);
-        const clientCfg = getSupabaseConfigStatus();
-        const activeUser = currentUserRef.current;
         setCloudSyncState((prev) => ({
           ...prev,
           connected,
@@ -1907,8 +1965,67 @@ export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: str
         } catch {}
       };
 
+      const hydrateDirectFromSupabase = async (): Promise<boolean> => {
+        if (!getSupabaseConfigStatus().configured) return false;
+        const liveRes = await fetchLiveStateFromSupabaseClient();
+        if (!liveRes.ok || !liveRes.state || !isMounted) return false;
+        const st = liveRes.state;
+        if (Array.isArray(st.vendors) && st.vendors.length > 0) {
+          setVendors(st.vendors);
+          try { localStorage.setItem('erp_live_vendors', JSON.stringify(st.vendors)); } catch {}
+        }
+        if (Array.isArray(st.archivedVendors)) {
+          setArchivedVendors(st.archivedVendors);
+        }
+        if (Array.isArray(st.products) && st.products.length > 0) {
+          setProducts(st.products);
+          try { localStorage.setItem('erp_live_products', JSON.stringify(st.products)); } catch {}
+        }
+        if (Array.isArray(st.brands) && st.brands.length > 0) {
+          setBrands(st.brands);
+        }
+        if (Array.isArray(st.categories) && st.categories.length > 0) {
+          setCategories(st.categories);
+        }
+        if (Array.isArray(st.customers) && st.customers.length > 0) {
+          setCustomers(st.customers);
+        }
+        if (Array.isArray(st.companies) && st.companies.length > 0) {
+          setCompanies(st.companies);
+        }
+        if (Array.isArray(st.purchaseExecutives) && st.purchaseExecutives.length > 0) {
+          setPurchaseExecutives(st.purchaseExecutives);
+        }
+        if (Array.isArray(st.requirements)) {
+          setRequirements(st.requirements);
+          try { localStorage.setItem('erp_live_requirements', JSON.stringify(st.requirements)); } catch {}
+        }
+        if (Array.isArray(st.rfqs)) {
+          setRfqs(st.rfqs);
+          try { localStorage.setItem('erp_live_rfqs', JSON.stringify(st.rfqs)); } catch {}
+        }
+        if (Array.isArray(st.vendorPOs)) {
+          setVendorPOs(st.vendorPOs);
+          try { localStorage.setItem('erp_live_vendor_pos', JSON.stringify(st.vendorPOs)); } catch {}
+        }
+        setLastSyncTime(new Date());
+        setCloudSyncState((prev) => ({
+          ...prev,
+          connected: true,
+          schemaApplied: true,
+          serverConfigured: true,
+          status: 'CLOUD_CONNECTED',
+          error: null,
+          lastCloudSyncAt: new Date(),
+        }));
+        return true;
+      };
+
       if (isStaticSpaMode()) {
-        ensureStaticSpaSeedData();
+        const hydrated = await hydrateDirectFromSupabase();
+        if (!hydrated) {
+          ensureStaticSpaSeedData();
+        }
         setIsSyncing(false);
         return;
       }
@@ -1929,7 +2046,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: str
         const res = await fetchApi(`/api/sync/state${revQuery}`, { timeoutMs: 25000 });
         if (isStaticSpaFallbackResponse(res)) {
           markStaticSpaMode(true);
-          ensureStaticSpaSeedData();
+          const hydrated = await hydrateDirectFromSupabase();
+          if (!hydrated) {
+            ensureStaticSpaSeedData();
+          }
           setIsSyncing(false);
           return;
         }
@@ -2945,6 +3065,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: str
         }
       }
     }
+    if (isStaticSpaMode() && getSupabaseConfigStatus().configured) {
+      const sbWrite = await upsertVendorToSupabaseClient(savedVendor);
+      if (!sbWrite.ok && sbWrite.error) {
+        console.warn('[Supabase Client] Vendor create sync warning:', sbWrite.error);
+      }
+    }
     markLocalWrite('vendor', savedVendor.id);
     removeTombstoneIds('erp_deleted_vendors', [savedVendor.id]);
     if (savedVendor.brandsSupplied && savedVendor.brandsSupplied.length > 0) {
@@ -3154,6 +3280,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: str
         if (typeof data.revision === 'number') {
           lastServerRevisionRef.current = data.revision;
         }
+      }
+    }
+    if (isStaticSpaMode() && getSupabaseConfigStatus().configured) {
+      const sbWrite = await upsertVendorToSupabaseClient(savedVendor);
+      if (!sbWrite.ok && sbWrite.error) {
+        console.warn('[Supabase Client] Vendor update sync warning:', sbWrite.error);
       }
     }
     markLocalWrite('vendor', savedVendor.id);
@@ -6263,6 +6395,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: str
     rfqNumber?: string;
     requirementSource?: 'Email' | 'WhatsApp' | 'Phone' | 'Manual' | 'Other' | string;
     referenceNumber?: string;
+    emailSubject?: string;
+    originalEmailText?: string;
+    sourceEmailId?: string;
   }): CustomerRequirement => {
     const year = new Date().getFullYear();
 
@@ -6376,6 +6511,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: str
       dbSaveStatus: 'COMMITTED',
       cloudSyncStatus: 'SYNCED',
       remarks: reqData.remarks,
+      emailSubject: reqData.emailSubject,
+      originalEmailText: reqData.originalEmailText,
+      sourceEmailId: reqData.sourceEmailId,
     };
 
     const nextReqs = [newReq, ...requirements.filter((r) => r.id !== reqId && r.rfqNumber !== generatedRfqNumber)];
@@ -6387,11 +6525,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode; initialTab?: str
     } catch {}
 
     // Persist new requirement to authoritative backend database immediately
-    fetchApi('/api/requirements', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...newReq, createdBy: currentUser.name, userRole: currentUser.role }),
-    }).catch((err) => console.warn('[API] Add requirement sync warning:', err));
+    if (isStaticSpaMode() && getSupabaseConfigStatus().configured) {
+      void upsertRequirementToSupabaseClient(newReq).then((sbRes) => {
+        if (!sbRes.ok && sbRes.error) {
+          console.warn('[Supabase Client] Add requirement sync warning:', sbRes.error);
+        }
+      });
+    } else {
+      fetchApi('/api/requirements', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...newReq, createdBy: currentUser.name, userRole: currentUser.role }),
+      })
+        .then((res) => {
+          if (isStaticSpaFallbackResponse(res)) {
+            markStaticSpaMode(true);
+            if (getSupabaseConfigStatus().configured) {
+              void upsertRequirementToSupabaseClient(newReq);
+            }
+          }
+        })
+        .catch((err) => console.warn('[API] Add requirement sync warning:', err));
+    }
 
     pushMutationToCloud({
       requirements: nextReqs,

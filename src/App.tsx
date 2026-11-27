@@ -17,6 +17,7 @@ const ErpAuthenticatedShell = lazy(() =>
 const PROTECTED_TABS = new Set([
   'dashboard',
   'requirements',
+  'rfq',
   'rfq-management',
   'rfqs',
   'vendor-rates',
@@ -24,6 +25,7 @@ const PROTECTED_TABS = new Set([
   'quotations',
   'customer-pos',
   'vendor-pos',
+  'purchase-orders',
   'pi',
   'proforma-invoices',
   'payments',
@@ -66,8 +68,11 @@ function resolveInitialRoute(): { requestedTab: string; isLoginPath: boolean } {
   if (rawSegment === 'approvals') {
     return { requestedTab: 'dashboard', isLoginPath: false };
   }
-  if (rawSegment === 'rfq-management' || rawSegment === 'rfqs') {
+  if (rawSegment === 'rfq' || rawSegment === 'rfq-management' || rawSegment === 'rfqs') {
     return { requestedTab: 'vendor-rates', isLoginPath: false };
+  }
+  if (rawSegment === 'purchase-orders') {
+    return { requestedTab: 'vendor-pos', isLoginPath: false };
   }
   if (PROTECTED_TABS.has(rawSegment)) {
     return { requestedTab: rawSegment, isLoginPath: false };

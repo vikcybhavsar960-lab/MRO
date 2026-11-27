@@ -1078,6 +1078,9 @@ export interface CustomerRequirement {
   remarks?: string;
   commercialLock?: CommercialLockInfo;
   isBulkImported?: boolean;
+  emailSubject?: string;
+  originalEmailText?: string;
+  sourceEmailId?: string;
 }
 
 export interface BackupRecord {
@@ -1539,9 +1542,45 @@ export interface EmailAccountConfig {
   lastError?: string;
 }
 
+export interface EmailPipelineDiagnostic {
+  emailReceived: 'YES' | 'NO';
+  messageRetrieved: 'YES' | 'NO';
+  subjectRetrieved: 'YES' | 'NO';
+  bodyRetrieved: 'YES' | 'NO';
+  attachmentRetrieved: 'YES' | 'NO';
+  parserStarted: 'YES' | 'NO';
+  attachmentCount: number;
+  attachmentsExtractedCount?: number;
+  extractedItemCount: number;
+  parserEngine: string;
+  timestamp: string;
+  notes?: string;
+}
+
+export interface EmailCatalogueMatchCandidate {
+  productId: string;
+  brand: string;
+  productName: string;
+  partCode: string;
+  manufacturerCode?: string;
+  modelNumber?: string;
+  category: string;
+  subCategory?: string;
+  specification?: string;
+  mrp?: number;
+  discountPercent?: number;
+  purchaseRate?: number;
+  supplierName?: string;
+  confidence: number;
+  matchReason: string;
+}
+
 export interface ExtractedEmailItem {
   id: string;
   itemName: string;
+  productTitle?: string;
+  description?: string;
+  originalLineText?: string;
   category?: string;
   subCategory?: string;
   partNumber?: string;
@@ -1553,6 +1592,18 @@ export interface ExtractedEmailItem {
   targetPrice?: number;
   expectedDeliveryDate?: string;
   confidence: number;
+  confidenceLevel?: 'High' | 'Medium' | 'Low';
+  lowConfidenceFields?: string[];
+  catalogueMatched?: boolean;
+  catalogueProductId?: string;
+  catalogueMrp?: number;
+  catalogueDiscount?: number;
+  cataloguePurchaseRate?: number;
+  catalogueSupplier?: string;
+  catalogueMatchReason?: string;
+  multipleMatchesFound?: boolean;
+  catalogueCandidates?: EmailCatalogueMatchCandidate[];
+  sourceOrigin?: 'EMAIL_BODY' | 'ATTACHMENT' | 'COMBINED';
 }
 
 export interface EmailRfqItem {
@@ -1567,15 +1618,17 @@ export interface EmailRfqItem {
   receivedDate: string; // Actual date received from email
   bodySnippet: string;
   fullBodyText: string;
+  htmlBodyText?: string;
   detectedItems: ExtractedEmailItem[];
   matchedCustomerId?: string;
   createdRequirementId?: string; // e.g. REQ-2026-00007
   status: 'NEW_EMAIL' | 'PROCESSING' | 'DRAFT_READY' | 'SAVED_AS_RFQ' | 'NEEDS_ATTENTION' | 'DUPLICATE' | 'IGNORED';
-  attachments: { name: string; size: string; type: string; url?: string }[];
+  attachments: { name: string; size: string; type: string; url?: string; extractedCount?: number }[];
   deliveryTerms?: string;
   paymentTerms?: string;
   targetLocation?: string;
   remarks?: string;
+  diagnostic?: EmailPipelineDiagnostic;
 }
 
 // ==========================================

@@ -30,19 +30,27 @@ import {
   loadEmailRfqs,
   saveEmailRfqs,
   loadEmailConfig,
-  saveEmailConfig,
-  appendSyncLog,
   parseEmailTextToRfq,
 } from '../../services/emailRfqService';
+import {
+  formatDiagnosticLines,
+  parseSpreadsheetBufferToEmailItems,
+} from '../../services/emailRequirementPipeline';
 import { EmailIntegrationSettingsModal } from './EmailIntegrationSettingsModal';
 import { fetchAndSyncGmailMessages } from '../../services/googleAuthService';
+import { fetchApi } from '../../utils/apiClient';
+import { isStaticSpaFallbackResponse } from '../../utils/staticSpaRuntime';
 
 interface EmailRfqInboxViewProps {
   onOpenRequirement: (reqId: string) => void;
+  onOpenInRequirementForm?: (email: EmailRfqItem) => void;
 }
 
-export const EmailRfqInboxView: React.FC<EmailRfqInboxViewProps> = ({ onOpenRequirement }) => {
-  const { customers, addRequirement, categories } = useApp();
+export const EmailRfqInboxView: React.FC<EmailRfqInboxViewProps> = ({
+  onOpenRequirement,
+  onOpenInRequirementForm,
+}) => {
+  const { customers, products, brands, vendors, addRequirement, categories } = useApp();
 
   const [emailRfqs, setEmailRfqs] = useState<EmailRfqItem[]>(() => loadEmailRfqs());
   const [emailConfig, setEmailConfig] = useState(() => loadEmailConfig());
@@ -60,11 +68,13 @@ export const EmailRfqInboxView: React.FC<EmailRfqInboxViewProps> = ({ onOpenRequ
   const [reviewItems, setReviewItems] = useState<ExtractedEmailItem[]>([]);
   const [reviewRemarks, setReviewRemarks] = useState<string>('');
 
-  // Manual Paste Email Modal
+  // Manual Paste Email & Attachment Modal
   const [isPasteModalOpen, setIsPasteModalOpen] = useState(false);
   const [pasteSubject, setPasteSubject] = useState('');
   const [pasteSender, setPasteSender] = useState('');
   const [pasteBody, setPasteBody] = useState('');
+  const [pasteAttachmentFiles, setPasteAttachmentFiles] = useState<File[]>([]);
+  const [isParsingManual, setIsParsingManual] = useState(false);
 
   const filteredEmails = emailRfqs.filter((item) => {
     const q = filterText.toLowerCase().trim();
@@ -84,11 +94,16 @@ export const EmailRfqInboxView: React.FC<EmailRfqInboxViewProps> = ({ onOpenRequ
     setSyncFeedback('Connecting to mailbox and scanning for RFQ emails...');
 
     try {
-      const res = await fetchAndSyncGmailMessages((msg) => setSyncFeedback(msg));
+      const res = await fetchAndSyncGmailMessages((msg) => setSyncFeedback(msg), {
+        customers,
+        products,
+        brands,
+        vendors,
+      });
       setEmailRfqs(loadEmailRfqs());
       setEmailConfig(loadEmailConfig());
       setSyncFeedback(res.message);
-      setTimeout(() => setSyncFeedback(null), 5000);
+      setTimeout(() => setSyncFeedback(null), 7000);
     } catch (err: any) {
       setSyncFeedback(err?.message || 'Synchronization failed.');
     } finally {
@@ -97,6 +112,10 @@ export const EmailRfqInboxView: React.FC<EmailRfqInboxViewProps> = ({ onOpenRequ
   };
 
   const handleOpenReview = (email: EmailRfqItem) => {
+    if (onOpenInRequirementForm) {
+      onOpenInRequirementForm(email);
+      return;
+    }
     setReviewEmail(email);
     setReviewCustomerId(email.matchedCustomerId || (customers.length > 0 ? customers[0].id : ''));
     setReviewReceivedDate(email.receivedDate || new Date().toISOString().split('T')[0]);
@@ -176,50 +195,149 @@ export const EmailRfqInboxView: React.FC<EmailRfqInboxViewProps> = ({ onOpenRequ
     setEmailRfqs(updated);
     saveEmailRfqs(updated);
     setReviewEmail(null);
-
-    if (confirm(`Successfully created Customer Requirement ${newReq.id} from email!\n\nWould you like to open this requirement now to enter vendor rates?`)) {
-      onOpenRequirement(newReq.id);
-    }
+    setSyncFeedback(`Created Customer Requirement ${newReq.id} from email "${reviewEmail.subject}".`);
+    onOpenRequirement(newReq.id);
   };
 
-  const handleManualPasteSubmit = (e: React.FormEvent) => {
+  const fileToBase64 = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const res = String(reader.result || '');
+        const commaIdx = res.indexOf(',');
+        resolve(commaIdx >= 0 ? res.slice(commaIdx + 1) : res);
+      };
+      reader.onerror = () => reject(new Error(`Failed to read ${file.name}`));
+      reader.readAsDataURL(file);
+    });
+
+  const handleManualPasteSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!pasteBody.trim()) return;
+    if (!pasteBody.trim() && pasteAttachmentFiles.length === 0) return;
 
-    const parsed = parseEmailTextToRfq(pasteBody, pasteSubject || 'Customer Inquiry', pasteSender || 'client@industry.com', customers);
+    setIsParsingManual(true);
+    try {
+      const attachmentItems: ExtractedEmailItem[] = [];
+      const inlineAiAttachments: Array<{ name: string; mimeType: string; base64Data: string }> = [];
+      const attachmentMeta: Array<{ name: string; size: string; type: string; extractedCount?: number }> = [];
 
-    const newEmailItem: EmailRfqItem = {
-      id: `EML-${Date.now().toString().slice(-4)}`,
-      messageId: `manual-${Date.now()}@mroprocurement.com`,
-      senderEmail: pasteSender || 'client@industry.com',
-      senderName: parsed.contactPerson || 'Purchasing Executive',
-      companyName: parsed.companyName || 'Industrial Client',
-      contactPerson: parsed.contactPerson || 'Procurement Incharge',
-      mobile: parsed.mobile || '',
-      subject: pasteSubject || 'Direct Customer Inquiry via Webmail',
-      receivedDate: new Date().toISOString().split('T')[0],
-      bodySnippet: pasteBody.slice(0, 160) + '...',
-      fullBodyText: pasteBody,
-      detectedItems: parsed.items,
-      matchedCustomerId: parsed.matchedCustomer?.id,
-      status: parsed.items.length > 0 ? 'DRAFT_READY' : 'NEEDS_ATTENTION',
-      attachments: [],
-      deliveryTerms: parsed.deliveryTerms,
-      paymentTerms: parsed.paymentTerms,
-      remarks: 'Manually ingested email text for AI RFQ extraction',
-    };
+      for (const file of pasteAttachmentFiles.slice(0, 5)) {
+        const lowerName = file.name.toLowerCase();
+        const isExcelOrCsv = /\.(xlsx|xls|csv)$/i.test(lowerName) || /spreadsheet|excel|csv/i.test(file.type);
+        const isPdfOrImage =
+          /\.(pdf|jpg|jpeg|png|webp)$/i.test(lowerName) ||
+          /^(application\/pdf|image\/(jpeg|jpg|png|webp))$/i.test(file.type);
 
-    const updated = [newEmailItem, ...emailRfqs];
-    setEmailRfqs(updated);
-    saveEmailRfqs(updated);
+        let extractedCount = 0;
+        if (isExcelOrCsv) {
+          const buf = new Uint8Array(await file.arrayBuffer());
+          const sheetItems = parseSpreadsheetBufferToEmailItems(buf, {
+            subject: pasteSubject,
+            brands,
+            products,
+            vendors,
+          });
+          extractedCount = sheetItems.length;
+          attachmentItems.push(...sheetItems);
+        } else if (isPdfOrImage && file.size <= 10 * 1024 * 1024) {
+          const base64Data = await fileToBase64(file);
+          inlineAiAttachments.push({
+            name: file.name,
+            mimeType: file.type || (lowerName.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg'),
+            base64Data,
+          });
+        }
 
-    setIsPasteModalOpen(false);
-    setPasteSubject('');
-    setPasteSender('');
-    setPasteBody('');
+        attachmentMeta.push({
+          name: file.name,
+          size: `${Math.max(1, Math.round(file.size / 1024))} KB`,
+          type: file.type || (isExcelOrCsv ? 'EXCEL' : 'DOCUMENT'),
+          extractedCount,
+        });
+      }
 
-    // Open review modal immediately for the new email
-    handleOpenReview(newEmailItem);
+      // If PDF/Image attachments or body can use server-side Gemini extraction, call /api/extract-email-rfq safely
+      let aiExtracted: any = null;
+      let parserEngine = 'DETERMINISTIC_CATALOGUE_MATCHER';
+      if (inlineAiAttachments.length > 0) {
+        try {
+          const extRes = await fetchApi('/api/extract-email-rfq', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              emailSubject: pasteSubject || 'Customer Inquiry',
+              senderEmail: pasteSender || 'client@industry.com',
+              emailBody: pasteBody,
+              attachments: attachmentMeta.map((a) => ({ name: a.name, type: a.type })),
+              inlineAttachments: inlineAiAttachments.slice(0, 3),
+            }),
+            timeoutMs: 45000,
+          });
+          if (!isStaticSpaFallbackResponse(extRes) && extRes.ok) {
+            const extJson = await extRes.json().catch(() => null);
+            if (extJson?.extracted) {
+              aiExtracted = extJson.extracted;
+              parserEngine = `AI_${extJson.modelUsed || 'GEMINI'}+CATALOGUE_MATCHER`;
+            }
+          }
+        } catch (err) {
+          console.warn('[Email Parser] AI attachment endpoint unavailable; continuing with local parser:', err);
+        }
+      }
+
+      const parsed = parseEmailTextToRfq(
+        pasteBody,
+        pasteSubject || 'Customer Inquiry',
+        pasteSender || 'client@industry.com',
+        customers,
+        {
+          products,
+          brands,
+          vendors,
+          attachmentItems,
+          attachmentCount: pasteAttachmentFiles.length,
+          aiItems: Array.isArray(aiExtracted?.detectedItems) ? aiExtracted.detectedItems : undefined,
+          parserEngine,
+        }
+      );
+
+      const newEmailItem: EmailRfqItem = {
+        id: `EML-${Date.now().toString().slice(-4)}`,
+        messageId: `manual-${Date.now()}@mroprocurement.com`,
+        senderEmail: pasteSender || 'client@industry.com',
+        senderName: aiExtracted?.contactPerson || parsed.contactPerson || 'Purchasing Executive',
+        companyName: aiExtracted?.companyName || parsed.companyName || 'Industrial Client',
+        contactPerson: aiExtracted?.contactPerson || parsed.contactPerson || 'Procurement Incharge',
+        mobile: aiExtracted?.mobile || parsed.mobile || '',
+        subject: pasteSubject || 'Direct Customer Inquiry via Webmail',
+        receivedDate: new Date().toISOString().split('T')[0],
+        bodySnippet: (pasteBody || `Attachment inquiry (${attachmentMeta.map((a) => a.name).join(', ')})`).slice(0, 160),
+        fullBodyText: pasteBody,
+        detectedItems: parsed.items,
+        matchedCustomerId: parsed.matchedCustomer?.id,
+        status: parsed.items.length > 0 ? 'DRAFT_READY' : 'NEEDS_ATTENTION',
+        attachments: attachmentMeta,
+        deliveryTerms: aiExtracted?.deliveryLocation || parsed.deliveryTerms,
+        paymentTerms: aiExtracted?.paymentTerms || parsed.paymentTerms,
+        remarks: aiExtracted?.remarks || 'Parsed from Email Body + Attachments + ERP Catalogue',
+        diagnostic: parsed.diagnostic,
+      };
+
+      const updated = [newEmailItem, ...emailRfqs];
+      setEmailRfqs(updated);
+      saveEmailRfqs(updated);
+
+      setIsPasteModalOpen(false);
+      setPasteSubject('');
+      setPasteSender('');
+      setPasteBody('');
+      setPasteAttachmentFiles([]);
+
+      // Immediately open the Requirement Form auto-filled with preview & confidence indicators (never auto-saves)
+      handleOpenReview(newEmailItem);
+    } finally {
+      setIsParsingManual(false);
+    }
   };
 
   return (
@@ -412,10 +530,11 @@ export const EmailRfqInboxView: React.FC<EmailRfqInboxViewProps> = ({ onOpenRequ
                     ) : (
                       <button
                         onClick={() => handleOpenReview(email)}
-                        className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs"
+                        data-testid={`open-email-in-req-form-${email.id}`}
+                        className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer"
                       >
                         <Sparkles className="w-3.5 h-3.5" />
-                        <span>Review & Convert to RFQ</span>
+                        <span>Open in Requirement Form (Auto-Fill)</span>
                       </button>
                     )}
                   </div>
@@ -425,6 +544,19 @@ export const EmailRfqInboxView: React.FC<EmailRfqInboxViewProps> = ({ onOpenRequ
                 <p className="text-xs text-slate-600 bg-slate-50 p-2.5 rounded-xl border border-slate-100 font-sans italic">
                   "{email.bodySnippet}"
                 </p>
+
+                {/* Safe Email Pipeline Diagnostic Strip (never displays tokens/credentials) */}
+                {email.diagnostic && (
+                  <div className="px-3 py-2 rounded-xl bg-slate-900 text-slate-200 font-mono text-[10px] flex flex-wrap items-center gap-x-3 gap-y-1">
+                    {formatDiagnosticLines(email.diagnostic).map((line, dIdx) => (
+                      <span key={dIdx} className="inline-flex items-center gap-1">
+                        <span className={line.endsWith('YES') ? 'text-emerald-400 font-bold' : 'text-amber-300 font-bold'}>
+                          {line}
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                )}
 
                 {/* Detected Material Items Badges */}
                 <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -437,11 +569,25 @@ export const EmailRfqInboxView: React.FC<EmailRfqInboxViewProps> = ({ onOpenRequ
                         key={idx}
                         className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-50 border border-blue-200 text-blue-900 text-[11px] font-semibold"
                       >
+                        {item.brand && <span className="font-bold text-slate-800">{item.brand}</span>}
                         <span>{item.itemName}</span>
                         <span className="text-blue-600 font-bold font-mono">({item.quantity} {item.uom})</span>
-                        {item.category && (
-                          <span className="text-[10px] bg-blue-200/60 text-blue-800 px-1.5 py-0.2 rounded font-bold">
-                            {item.category}
+                        {item.confidenceLevel && (
+                          <span
+                            className={`text-[10px] px-1.5 py-0.2 rounded font-bold ${
+                              item.confidenceLevel === 'High'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : item.confidenceLevel === 'Medium'
+                                  ? 'bg-amber-100 text-amber-800'
+                                  : 'bg-rose-100 text-rose-800'
+                            }`}
+                          >
+                            {item.confidenceLevel}
+                          </span>
+                        )}
+                        {item.multipleMatchesFound && (
+                          <span className="text-[10px] bg-purple-100 text-purple-800 px-1.5 py-0.2 rounded font-bold">
+                            Multiple matches
                           </span>
                         )}
                       </span>
@@ -713,12 +859,31 @@ export const EmailRfqInboxView: React.FC<EmailRfqInboxViewProps> = ({ onOpenRequ
                 </label>
                 <textarea
                   rows={6}
-                  required
+                  required={pasteAttachmentFiles.length === 0}
                   value={pasteBody}
                   onChange={(e) => setPasteBody(e.target.value)}
-                  placeholder="Paste the customer's email content here with line items, quantities, and specifications..."
+                  data-testid="manual-email-body-input"
+                  placeholder="Paste the customer/vendor email content here (e.g. Schneider 10A 2 Pole MCB - 20 Nos)..."
                   className="w-full p-2 border border-slate-300 rounded-lg font-mono text-[11px]"
                 />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Email Attachments (Optional — PDF, Excel, CSV, JPG, PNG, WEBP)
+                </label>
+                <input
+                  type="file"
+                  multiple
+                  accept=".pdf,.xlsx,.xls,.csv,.jpg,.jpeg,.png,.webp"
+                  onChange={(e) => setPasteAttachmentFiles(Array.from(e.target.files || []))}
+                  className="w-full text-[11px] p-1.5 border border-slate-300 rounded-lg bg-slate-50"
+                />
+                {pasteAttachmentFiles.length > 0 && (
+                  <p className="text-[10px] text-emerald-700 font-semibold mt-1">
+                    Attached: {pasteAttachmentFiles.map((f) => f.name).join(', ')} (will combine Email Body + Attachment + ERP Catalogue)
+                  </p>
+                )}
               </div>
 
               <div className="pt-2 flex items-center justify-end gap-2">
@@ -731,10 +896,12 @@ export const EmailRfqInboxView: React.FC<EmailRfqInboxViewProps> = ({ onOpenRequ
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold flex items-center gap-1.5 shadow-md shadow-blue-500/20"
+                  disabled={isParsingManual}
+                  data-testid="parse-and-autofill-email-btn"
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl font-bold flex items-center gap-1.5 shadow-md shadow-blue-500/20 cursor-pointer"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
-                  <span>Extract & Review RFQ</span>
+                  <span>{isParsingManual ? 'Extracting & Matching...' : 'Extract & Auto-Fill Requirement Form'}</span>
                 </button>
               </div>
             </form>

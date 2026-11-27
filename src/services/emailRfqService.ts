@@ -1,5 +1,16 @@
-import { EmailAccountConfig, EmailRfqItem, ExtractedEmailItem, Customer } from '../types';
-import { recommendCategoryForRequirement } from './categoryMatchingService';
+import {
+  BrandMasterItem,
+  Customer,
+  EmailAccountConfig,
+  EmailRfqItem,
+  ExtractedEmailItem,
+  ProductItem,
+  Vendor,
+} from '../types';
+import {
+  parseEmailRequirementWithCatalogue,
+  ParsedEmailRequirementResult,
+} from './emailRequirementPipeline';
 
 const EMAIL_CONFIG_KEY = 'mro_email_account_config';
 const EMAIL_ITEMS_KEY = 'mro_email_rfq_items';
@@ -237,105 +248,38 @@ export const saveEmailRfqs = (items: EmailRfqItem[]) => {
 };
 
 /**
- * Intelligent parser that extracts customer name, line items, quantities, UOMs, and categories from email text
+ * Intelligent parser that extracts customer/vendor info, line items, brands,
+ * specifications, quantities, UOMs, and strict 6-level catalogue matches from email text
+ * without inventing part numbers or product names.
  */
 export function parseEmailTextToRfq(
   rawText: string,
   subject: string,
   senderEmail: string,
-  customers: Customer[]
-): {
-  companyName: string;
-  contactPerson: string;
-  mobile: string;
-  matchedCustomer?: Customer;
-  items: ExtractedEmailItem[];
-  deliveryTerms?: string;
-  paymentTerms?: string;
-  remarks?: string;
-} {
-  // 1. Try to match sender domain/email to customer
-  const domain = senderEmail.split('@')[1]?.toLowerCase() || '';
-  const matchedCustomer = customers.find(
-    (c) =>
-      c.email.toLowerCase().includes(senderEmail.toLowerCase()) ||
-      (domain && c.companyName.toLowerCase().includes(domain.split('.')[0]))
-  );
-
-  let companyName = matchedCustomer ? matchedCustomer.companyName : '';
-  let contactPerson = matchedCustomer ? matchedCustomer.contactPerson : '';
-  let mobile = matchedCustomer ? matchedCustomer.mobile : '';
-
-  if (!companyName) {
-    // Extract from subject or sender
-    const subjectMatch = subject.match(/(?:from|for|at)\s+([A-Za-z0-9\s&]+?)(?:\s+plant|\s+stores|\s+-|$)/i);
-    if (subjectMatch) companyName = subjectMatch[1].trim();
-    else companyName = senderEmail.split('@')[0].replace(/[._]/g, ' ').toUpperCase();
+  customers: Customer[],
+  options?: {
+    senderName?: string;
+    products?: ProductItem[];
+    brands?: BrandMasterItem[];
+    vendors?: Vendor[];
+    attachmentItems?: ExtractedEmailItem[];
+    attachmentCount?: number;
+    aiItems?: Array<Partial<ExtractedEmailItem>>;
+    parserEngine?: string;
   }
-
-  // 2. Parse lines for material items
-  const lines = rawText.split('\n').map((l) => l.trim()).filter(Boolean);
-  const detectedItems: ExtractedEmailItem[] = [];
-
-  // Patterns for line items: e.g. "1. Molded Case Circuit Breaker (MCCB) - Qty: 4 NOS"
-  const itemPattern = /(?:^\d+[\.\)]\s*|^[-*•]\s*)(.+?)(?:[-–—:]\s*(?:Qty|Quantity|Nos|Pieces|Set|Kg|Mtr)?\s*[:\s]*(\d+)\s*([A-Za-z]+)?)?$/i;
-
-  lines.forEach((line, index) => {
-    const match = line.match(itemPattern);
-    if (match) {
-      let rawItemDesc = match[1].trim();
-      let qty = parseInt(match[2], 10) || 1;
-      let uom = (match[3] || 'NOS').toUpperCase();
-
-      // Check if qty is embedded in text (e.g. "Qty: 10 NOS" or "10 pcs")
-      const embeddedQtyMatch = rawItemDesc.match(/(?:qty|quantity)[\s:]+(\d+)\s*([A-Za-z]+)?/i);
-      if (embeddedQtyMatch) {
-        qty = parseInt(embeddedQtyMatch[1], 10) || qty;
-        if (embeddedQtyMatch[2]) uom = embeddedQtyMatch[2].toUpperCase();
-        rawItemDesc = rawItemDesc.replace(embeddedQtyMatch[0], '').trim();
-      }
-
-      // Check for Brand e.g. (Schneider or Siemens)
-      let brand = '';
-      const brandMatch = rawItemDesc.match(/\((Schneider|Siemens|SKF|FAG|Festo|Gates|Fenner|MOSIL|L&T|Audco|ABB|Danfoss|Rexroth|Parker|SMC)[^)]*\)/i);
-      if (brandMatch) {
-        brand = brandMatch[1];
-      }
-
-      // Recommend category strictly using domain matching
-      const catRec = recommendCategoryForRequirement({ itemName: rawItemDesc, description: brand });
-
-      detectedItems.push({
-        id: `ITEM-AUTO-${index + 1}`,
-        itemName: rawItemDesc.replace(/\s*-\s*$/, '').trim(),
-        category: catRec.category,
-        subCategory: catRec.subCategory,
-        partNumber: '',
-        brand: brand || '',
-        specification: rawItemDesc,
-        quantity: qty,
-        uom: ['NOS', 'SET', 'KG', 'MTR', 'LTR', 'PKT'].includes(uom) ? uom : 'NOS',
-        confidence: catRec.confidence,
-      });
-    }
+): ParsedEmailRequirementResult {
+  return parseEmailRequirementWithCatalogue({
+    rawText,
+    subject,
+    senderEmail,
+    senderName: options?.senderName,
+    customers,
+    products: options?.products || [],
+    brands: options?.brands || [],
+    vendors: options?.vendors || [],
+    attachmentItems: options?.attachmentItems || [],
+    attachmentCount: options?.attachmentCount ?? 0,
+    aiItems: options?.aiItems,
+    parserEngine: options?.parserEngine,
   });
-
-  // Extract payment terms & delivery
-  let paymentTerms = '30 Days Net';
-  const payMatch = rawText.match(/payment\s*terms?\s*[:\-]\s*([^\n\r.]+)/i);
-  if (payMatch) paymentTerms = payMatch[1].trim();
-
-  let deliveryTerms = 'Door Delivery';
-  const delMatch = rawText.match(/(?:delivery\s*terms?|required\s*delivery|delivery\s*location)\s*[:\-]\s*([^\n\r.]+)/i);
-  if (delMatch) deliveryTerms = delMatch[1].trim();
-
-  return {
-    companyName,
-    contactPerson,
-    mobile,
-    matchedCustomer,
-    items: detectedItems,
-    paymentTerms,
-    deliveryTerms,
-  };
 }

@@ -8,9 +8,24 @@ import {
   signOut,
 } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { EmailRfqItem } from '../types';
+import {
+  BrandMasterItem,
+  Customer,
+  EmailRfqItem,
+  ExtractedEmailItem,
+  ProductItem,
+  Vendor,
+} from '../types';
 import { fetchApi } from '../utils/apiClient';
+import { isStaticSpaFallbackResponse } from '../utils/staticSpaRuntime';
 import { appendSyncLog, loadEmailConfig, saveEmailConfig, loadEmailRfqs, saveEmailRfqs } from './emailRfqService';
+import {
+  buildSafeEmailDiagnostic,
+  extractGmailMessageContent,
+  formatDiagnosticLines,
+  parseEmailRequirementWithCatalogue,
+  parseSpreadsheetBufferToEmailItems,
+} from './emailRequirementPipeline';
 
 // Initialize Firebase App singleton
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
@@ -89,43 +104,75 @@ export const googleSignOut = async () => {
   saveEmailConfig(cfg);
 };
 
-// Sync real emails from Gmail API or fallback to simulated sync
+function base64UrlToUint8Array(base64Url: string): Uint8Array {
+  const normalized = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+  const padLen = (4 - (normalized.length % 4)) % 4;
+  const binary = atob(normalized + '='.repeat(padLen));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function uint8ArrayToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+export interface GmailSyncContext {
+  customers?: Customer[];
+  products?: ProductItem[];
+  brands?: BrandMasterItem[];
+  vendors?: Vendor[];
+}
+
+// Sync real emails from Gmail API with full recursive MIME body + attachment retrieval & catalogue verification
 export const fetchAndSyncGmailMessages = async (
-  onProgress?: (msg: string) => void
-): Promise<{ success: boolean; newCount: number; message: string }> => {
+  onProgress?: (msg: string) => void,
+  syncContext?: GmailSyncContext
+): Promise<{ success: boolean; newCount: number; message: string; diagnosticLines?: string[] }> => {
   const token = cachedAccessToken;
   const cfg = loadEmailConfig();
 
   if (!token) {
-    // If not signed in to Google, perform mock/test sync to verify workflow
-    onProgress?.('No active Google session. Running simulated email sync test...');
-    await new Promise((r) => setTimeout(r, 1200));
-
-    const existing = loadEmailRfqs();
-    appendSyncLog({
-      provider: 'GMAIL_TEST',
-      status: 'SUCCESS',
-      messagesFound: 3,
-      newDraftsCreated: 1,
-      duplicatesSkipped: 2,
-      details: 'Test sync completed. Connect Gmail for live mail inbox reading.',
+    const diag = buildSafeEmailDiagnostic({
+      emailReceived: false,
+      messageRetrieved: false,
+      parserStarted: false,
+      extractedItemCount: 0,
+      parserEngine: 'GMAIL_OAUTH_REQUIRED',
+      notes: 'No active Google Workspace Gmail OAuth session in memory. Click "Email Settings -> Connect with Google Workspace" to authorize live mailbox retrieval, or use "Parse Email Text / Upload Attachment".',
     });
 
-    cfg.lastSyncedAt = new Date().toISOString();
-    saveEmailConfig(cfg);
+    appendSyncLog({
+      provider: 'GMAIL',
+      status: 'ERROR',
+      messagesFound: 0,
+      newDraftsCreated: 0,
+      duplicatesSkipped: 0,
+      details: `${formatDiagnosticLines(diag).join(' | ')} — Gmail OAuth session required.`,
+    });
 
     return {
-      success: true,
-      newCount: 1,
-      message: 'Test sync passed. Connect official Gmail for live mailbox streaming.',
+      success: false,
+      newCount: 0,
+      message:
+        'Gmail is not actively authorized in this browser session. Open Email Settings -> Connect with Google Workspace to fetch live emails (or use Parse Email Text / Upload Attachment).',
+      diagnosticLines: formatDiagnosticLines(diag),
     };
   }
 
   try {
-    onProgress?.('Querying Gmail API for procurement & RFQ emails...');
-    
-    // Query Gmail for recent procurement/RFQ emails
-    const query = encodeURIComponent('subject:(RFQ OR Enquiry OR Requirement OR Quotation OR Spares OR Order)');
+    onProgress?.('Querying Gmail API for procurement, requirement & RFQ emails...');
+
+    const query = encodeURIComponent(
+      'in:inbox (RFQ OR Enquiry OR Inquiry OR Requirement OR Quotation OR Quote OR Spares OR Material OR MCB OR Bearing OR Valve OR Motor)'
+    );
     const listRes = await fetch(
       `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=10&q=${query}`,
       {
@@ -134,6 +181,9 @@ export const fetchAndSyncGmailMessages = async (
     );
 
     if (!listRes.ok) {
+      if (listRes.status === 401) {
+        cachedAccessToken = null;
+      }
       throw new Error(`Gmail API HTTP ${listRes.status}: ${listRes.statusText}`);
     }
 
@@ -147,7 +197,7 @@ export const fetchAndSyncGmailMessages = async (
         messagesFound: 0,
         newDraftsCreated: 0,
         duplicatesSkipped: 0,
-        details: 'Sync completed. No new RFQ emails found in mailbox.',
+        details: 'Email Received: NO | Message Retrieved: NO | Parser Started: NO — No matching requirement emails found.',
       });
       return { success: true, newCount: 0, message: 'No new requirement emails found in inbox.' };
     }
@@ -155,11 +205,12 @@ export const fetchAndSyncGmailMessages = async (
     const currentRfqs = loadEmailRfqs();
     let newDraftCount = 0;
     let dupCount = 0;
+    let lastDiagLines: string[] = [];
 
-    for (const m of messages.slice(0, 5)) {
-      onProgress?.(`Fetching email ${m.id}...`);
+    for (const m of messages.slice(0, 6)) {
+      onProgress?.(`Retrieving full email message ${m.id}...`);
       const msgRes = await fetch(
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=full`,
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(m.id)}?format=full`,
         {
           headers: { Authorization: `Bearer ${token}` },
         }
@@ -168,102 +219,153 @@ export const fetchAndSyncGmailMessages = async (
       if (!msgRes.ok) continue;
       const msgData = await msgRes.json();
 
-      const headers = msgData.payload?.headers || [];
-      const getHeader = (name: string) => headers.find((h: any) => h.name.toLowerCase() === name.toLowerCase())?.value || '';
+      // Recursively extract headers, plain text, HTML body, and ALL nested attachments
+      const extracted = extractGmailMessageContent(msgData);
 
-      const subject = getHeader('Subject') || 'Customer Requirement';
-      const from = getHeader('From') || '';
-      const dateHeader = getHeader('Date');
-      const receivedDate = dateHeader ? new Date(dateHeader).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
-
-      // Extract sender name & email
-      let senderEmail = from;
-      let senderName = from;
-      const match = from.match(/^(.*?)\s*<(.+?)>$/);
-      if (match) {
-        senderName = match[1].replace(/["']/g, '').trim();
-        senderEmail = match[2].trim();
-      }
-
-      // Check duplicate
-      const alreadyExists = currentRfqs.some(
-        (r) => r.messageId === m.id || (r.senderEmail === senderEmail && r.subject === subject)
-      );
-
+      // Deduplicate strictly by Gmail messageId
+      const alreadyExists = currentRfqs.some((r) => r.messageId === extracted.messageId);
       if (alreadyExists) {
         dupCount++;
         continue;
       }
 
-      // Extract body text from parts
-      let bodyText = msgData.snippet || '';
-      if (msgData.payload?.parts) {
-        for (const part of msgData.payload.parts) {
-          if (part.mimeType === 'text/plain' && part.body?.data) {
-            bodyText = atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/'));
-            break;
+      // Retrieve & parse supported attachments (Excel, CSV, PDF, JPG, JPEG, PNG, WEBP)
+      const attachmentItems: ExtractedEmailItem[] = [];
+      const inlineAiAttachments: Array<{ name: string; mimeType: string; base64Data: string }> = [];
+      const attachmentMeta: Array<{ name: string; size: string; type: string; extractedCount?: number }> = [];
+      let retrievedAttachmentFiles = 0;
+
+      for (const att of extracted.attachments.slice(0, 5)) {
+        const lowerName = att.filename.toLowerCase();
+        const isExcelOrCsv = /\.(xlsx|xls|csv)$/i.test(lowerName) || /spreadsheet|excel|csv/i.test(att.mimeType);
+        const isPdfOrImage =
+          /\.(pdf|jpg|jpeg|png|webp)$/i.test(lowerName) ||
+          /^(application\/pdf|image\/(jpeg|jpg|png|webp))$/i.test(att.mimeType);
+
+        let attExtractedCount = 0;
+
+        if ((isExcelOrCsv || isPdfOrImage) && att.attachmentId && att.size <= 10 * 1024 * 1024) {
+          try {
+            onProgress?.(`Downloading attachment "${att.filename}"...`);
+            const attRes = await fetch(
+              `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(m.id)}/attachments/${encodeURIComponent(att.attachmentId)}`,
+              {
+                headers: { Authorization: `Bearer ${token}` },
+              }
+            );
+            if (attRes.ok) {
+              const attJson = await attRes.json();
+              if (attJson?.data) {
+                retrievedAttachmentFiles++;
+                const bytes = base64UrlToUint8Array(attJson.data);
+                if (isExcelOrCsv) {
+                  const parsedSheetItems = parseSpreadsheetBufferToEmailItems(bytes, {
+                    subject: extracted.subject,
+                    brands: syncContext?.brands || [],
+                    products: syncContext?.products || [],
+                    vendors: syncContext?.vendors || [],
+                  });
+                  attExtractedCount = parsedSheetItems.length;
+                  attachmentItems.push(...parsedSheetItems);
+                } else if (isPdfOrImage) {
+                  inlineAiAttachments.push({
+                    name: att.filename,
+                    mimeType:
+                      att.mimeType ||
+                      (lowerName.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg'),
+                    base64Data: uint8ArrayToBase64(bytes),
+                  });
+                }
+              }
+            }
+          } catch (attErr) {
+            console.warn(`[Gmail Sync] Attachment retrieval skipped for ${att.filename}:`, attErr);
           }
         }
+
+        attachmentMeta.push({
+          name: att.filename,
+          size: att.size ? `${Math.max(1, Math.round(att.size / 1024))} KB` : 'Attached',
+          type: att.mimeType || 'Document',
+          extractedCount: attExtractedCount,
+        });
       }
 
-      onProgress?.(`Extracting RFQ line items from "${subject}" with AI...`);
+      onProgress?.(`Parsing "${extracted.subject}" & matching ERP Brand Catalogue...`);
 
-      // Call AI Extraction endpoint
-      let extractedData: any = { detectedItems: [] };
+      // Attempt server-side Gemini multimodal extraction (body + PDF/Image attachments) if Express backend is present
+      let aiExtracted: any = null;
+      let parserEngine = 'DETERMINISTIC_CATALOGUE_MATCHER';
       try {
         const extRes = await fetchApi('/api/extract-email-rfq', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            emailSubject: subject,
-            senderEmail,
-            senderName,
-            emailBody: bodyText,
+            emailSubject: extracted.subject,
+            senderEmail: extracted.senderEmail,
+            senderName: extracted.senderName,
+            emailBody: extracted.combinedBodyText,
+            attachments: attachmentMeta.map((a) => ({ name: a.name, type: a.type })),
+            inlineAttachments: inlineAiAttachments.slice(0, 3),
           }),
           timeoutMs: 45000,
         });
-        if (extRes.ok) {
-          const extJson = await extRes.json();
-          extractedData = extJson.extracted || { detectedItems: [] };
+        if (!isStaticSpaFallbackResponse(extRes) && extRes.ok) {
+          const extJson = await extRes.json().catch(() => null);
+          if (extJson?.extracted) {
+            aiExtracted = extJson.extracted;
+            parserEngine = `AI_${extJson.modelUsed || 'GEMINI'}+CATALOGUE_MATCHER`;
+          }
         }
       } catch (err) {
-        console.warn('AI extraction failed, using raw email snippet:', err);
+        console.warn('[Gmail Sync] Server AI extraction unavailable; using deterministic + catalogue matcher:', err);
       }
 
+      // ALWAYS combine Email Body + Attachments + AI Extraction + Existing ERP Brand/Product Catalogue
+      const parsed = parseEmailRequirementWithCatalogue({
+        rawText: extracted.combinedBodyText,
+        subject: extracted.subject,
+        senderEmail: extracted.senderEmail,
+        senderName: extracted.senderName,
+        customers: syncContext?.customers || [],
+        products: syncContext?.products || [],
+        brands: syncContext?.brands || [],
+        vendors: syncContext?.vendors || [],
+        attachmentItems,
+        attachmentCount: extracted.attachments.length,
+        aiItems: Array.isArray(aiExtracted?.detectedItems) ? aiExtracted.detectedItems : undefined,
+        parserEngine,
+      });
+
+      const diagnostic = {
+        ...parsed.diagnostic,
+        attachmentRetrieved:
+          extracted.attachments.length > 0 && retrievedAttachmentFiles > 0 ? ('YES' as const) : ('NO' as const),
+        attachmentsExtractedCount: attachmentItems.length + inlineAiAttachments.length,
+      };
+      lastDiagLines = formatDiagnosticLines(diagnostic);
+
       const newEmailItem: EmailRfqItem = {
-        id: `EML-${Date.now().toString().slice(-6)}`,
-        messageId: m.id,
-        senderEmail,
-        senderName,
-        companyName: extractedData.companyName || senderName || 'Customer Client',
-        contactPerson: extractedData.contactPerson || senderName,
-        mobile: extractedData.mobile || '',
-        subject,
-        receivedDate,
-        bodySnippet: msgData.snippet || bodyText.slice(0, 180),
-        fullBodyText: bodyText,
-        detectedItems: (extractedData.detectedItems || []).map((it: any, idx: number) => ({
-          id: `EXT-${idx + 1}`,
-          itemName: it.itemName || 'Required Material',
-          category: it.category || 'General MRO',
-          subCategory: it.subCategory || '',
-          partNumber: it.partNumber || '',
-          brand: it.brand || '',
-          specification: it.specification || '',
-          quantity: it.quantity || 1,
-          uom: it.uom || 'NOS',
-          targetPrice: it.targetPrice || 0,
-          confidence: it.confidence || 90,
-        })),
-        status: 'DRAFT_READY',
-        attachments: (msgData.payload?.parts || [])
-          .filter((p: any) => p.filename && p.filename.length > 0)
-          .map((p: any) => ({
-            name: p.filename,
-            size: p.body?.size ? `${Math.round(p.body.size / 1024)} KB` : 'Attached',
-            type: p.mimeType || 'Document',
-          })),
-        remarks: extractedData.remarks || 'Synced from connected Google Workspace Gmail account',
+        id: `EML-${Date.now().toString().slice(-6)}-${newDraftCount + 1}`,
+        messageId: extracted.messageId,
+        senderEmail: extracted.senderEmail,
+        senderName: extracted.senderName,
+        companyName: aiExtracted?.companyName || parsed.companyName || extracted.senderName || 'Email Sender',
+        contactPerson: aiExtracted?.contactPerson || parsed.contactPerson || extracted.senderName,
+        mobile: aiExtracted?.mobile || parsed.mobile || '',
+        subject: extracted.subject,
+        receivedDate: extracted.receivedDate,
+        bodySnippet: (msgData.snippet || extracted.combinedBodyText.slice(0, 180)).trim(),
+        fullBodyText: extracted.combinedBodyText,
+        htmlBodyText: extracted.htmlBody || undefined,
+        detectedItems: parsed.items,
+        matchedCustomerId: parsed.matchedCustomer?.id,
+        status: parsed.items.length > 0 ? 'DRAFT_READY' : 'NEEDS_ATTENTION',
+        attachments: attachmentMeta,
+        deliveryTerms: aiExtracted?.deliveryLocation || parsed.deliveryTerms,
+        paymentTerms: aiExtracted?.paymentTerms || parsed.paymentTerms,
+        remarks: aiExtracted?.remarks || 'Synced from Google Workspace Gmail inbox',
+        diagnostic,
       };
 
       currentRfqs.unshift(newEmailItem);
@@ -280,13 +382,14 @@ export const fetchAndSyncGmailMessages = async (
       messagesFound: messages.length,
       newDraftsCreated: newDraftCount,
       duplicatesSkipped: dupCount,
-      details: `Live Gmail sync: ${newDraftCount} new RFQ drafts created, ${dupCount} duplicates skipped.`,
+      details: `${lastDiagLines.join(' | ')} — ${newDraftCount} new requirement draft(s), ${dupCount} duplicate(s) skipped.`,
     });
 
     return {
       success: true,
       newCount: newDraftCount,
-      message: `Sync successful! ${newDraftCount} new RFQ drafts prepared from Gmail.`,
+      message: `Sync complete: ${newDraftCount} new requirement draft(s) extracted (${dupCount} already imported). Open any email to auto-fill the Requirement Form.`,
+      diagnosticLines: lastDiagLines,
     };
   } catch (error: any) {
     console.error('Gmail Sync Error:', error);

@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "mro",
+  "name": "mro-procurement-solution",
   "compatibility_date": "2025-04-01",
   "workers_dev": true,
   "preview_urls": true,

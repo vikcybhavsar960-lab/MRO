@@ -8,7 +8,7 @@ import { AccessDeniedView } from './common/AccessDeniedView';
 import { SessionExpiryModal } from './auth/SessionExpiryModal';
 import { fetchApi, clearAuthSession, getCurrentSessionId } from '../utils/apiClient';
 import { loadWithRetry } from '../utils/lazyImportWithRetry';
-import { User } from '../types';
+import { EmailRfqItem, User } from '../types';
 
 function lazyNamed<T extends Record<string, any>, K extends keyof T>(
   loader: () => Promise<T>,
@@ -116,6 +116,7 @@ const ErpShellContent: React.FC<ErpAuthenticatedShellProps> = ({
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [isGoogleSheetsOpen, setIsGoogleSheetsOpen] = useState(false);
   const [isNewReqOpen, setIsNewReqOpen] = useState(false);
+  const [pendingEmailDraft, setPendingEmailDraft] = useState<EmailRfqItem | null>(null);
   const [rateSubmissionEnquiryId, setRateSubmissionEnquiryId] = useState<string | null>(null);
   const [rateSubmissionReqId, setRateSubmissionReqId] = useState<string | null>(null);
   const [quotationParams, setQuotationParams] = useState<{ reqId?: string; quoteId?: string } | null>(null);
@@ -256,6 +257,7 @@ const ErpShellContent: React.FC<ErpAuthenticatedShellProps> = ({
         return perms.dashboard !== false;
       case 'requirements':
         return perms.requirements !== false;
+      case 'rfq':
       case 'rfq-management':
       case 'rfqs':
       case 'vendor-rates':
@@ -266,6 +268,7 @@ const ErpShellContent: React.FC<ErpAuthenticatedShellProps> = ({
       case 'customer-pos':
         return perms.customerPos !== false;
       case 'vendor-pos':
+      case 'purchase-orders':
         return perms.vendorPos !== false;
       case 'proforma-invoices':
       case 'pi':
@@ -340,6 +343,7 @@ const ErpShellContent: React.FC<ErpAuthenticatedShellProps> = ({
           />
         );
 
+      case 'rfq':
       case 'rfq-management':
       case 'rfqs':
       case 'vendor-rates':
@@ -433,6 +437,7 @@ const ErpShellContent: React.FC<ErpAuthenticatedShellProps> = ({
         );
 
       case 'vendor-pos':
+      case 'purchase-orders':
         return (
           <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -800,6 +805,10 @@ const ErpShellContent: React.FC<ErpAuthenticatedShellProps> = ({
               setSelectedOrderId(reqId);
               setActiveTab('requirements');
             }}
+            onOpenInRequirementForm={(email) => {
+              setPendingEmailDraft(email);
+              setIsNewReqOpen(true);
+            }}
           />
         );
       case 'inventory':
@@ -914,7 +923,22 @@ const ErpShellContent: React.FC<ErpAuthenticatedShellProps> = ({
           />
         )}
 
-        {isNewReqOpen && <NewRequirementModal isOpen={isNewReqOpen} onClose={() => setIsNewReqOpen(false)} />}
+        {isNewReqOpen && (
+          <NewRequirementModal
+            isOpen={isNewReqOpen}
+            initialEmailDraft={pendingEmailDraft}
+            onEmailDraftConverted={(_emailId, reqId) => {
+              setPendingEmailDraft(null);
+              setIsNewReqOpen(false);
+              setSelectedOrderId(reqId);
+              setActiveTab('requirements');
+            }}
+            onClose={() => {
+              setPendingEmailDraft(null);
+              setIsNewReqOpen(false);
+            }}
+          />
+        )}
 
         {rateSubmissionEnquiryId && (
           <VendorRateSubmissionModal

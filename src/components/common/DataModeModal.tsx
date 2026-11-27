@@ -22,6 +22,10 @@ import {
 import { useApp } from '../../context/AppContext';
 import { fetchApi } from '../../utils/apiClient';
 import { isAdminRole } from '../../utils/roleUtils';
+import {
+  runLiveSupabaseProductionTest,
+  SupabaseProductionVerificationReport,
+} from '../../services/supabaseClientDataService';
 
 interface DataModeModalProps {
   isOpen: boolean;
@@ -70,6 +74,8 @@ export const DataModeModal: React.FC<DataModeModalProps> = ({
   const [isMigrating, setIsMigrating] = useState<boolean>(false);
   const [copiedSql, setCopiedSql] = useState<boolean>(false);
   const [sqlPreviewText, setSqlPreviewText] = useState<string>('');
+  const [liveTestReport, setLiveTestReport] = useState<SupabaseProductionVerificationReport | null>(null);
+  const [isRunningLiveTest, setIsRunningLiveTest] = useState<boolean>(false);
 
   if (!isOpen) return null;
 
@@ -83,6 +89,26 @@ export const DataModeModal: React.FC<DataModeModalProps> = ({
       setMigrationStatus({ ok: res.success, msg: res.message });
     } finally {
       setIsMigrating(false);
+    }
+  };
+
+  const handleRunProductionReadWriteTest = async () => {
+    setIsRunningLiveTest(true);
+    setLiveTestReport(null);
+    try {
+      const report = await runLiveSupabaseProductionTest({ includeWriteRoundTrip: true });
+      setLiveTestReport(report);
+      setMigrationStatus({
+        ok: report.connected && report.writeTestPassed !== false,
+        msg: report.connected
+          ? `Live Supabase verified (${report.url}): Vendors=${report.counts.vendors}, Products=${report.counts.products}, Requirements=${report.counts.requirements}. ${report.writeTestDetail || ''}`
+          : report.rlsError ||
+            (!report.hasPublishableKey
+              ? 'VITE_SUPABASE_PUBLISHABLE_KEY is missing from this build bundle. Add it in Cloudflare Workers Settings -> Build -> Variables and secrets, then redeploy.'
+              : 'Live Supabase verification did not complete. Inspect step details below.'),
+      });
+    } finally {
+      setIsRunningLiveTest(false);
     }
   };
 
@@ -116,14 +142,35 @@ export const DataModeModal: React.FC<DataModeModalProps> = ({
     }
   };
 
-  const handleCopySchemaSql = async () => {
+  const loadValidSchemaSql = async (): Promise<string> => {
+    const isHtmlDoc = (txt: string) => /^\s*(<!doctype|<html)/i.test(txt);
+
+    // 1. Try Express backend endpoint when running full-stack
     try {
       const res = await fetchApi('/api/supabase/schema-sql');
-      if (!res.ok) {
-        setMigrationStatus({ ok: false, msg: `Unable to load migration SQL (HTTP ${res.status}).` });
-        return;
+      if (res.ok) {
+        const text = await res.text();
+        if (text.trim() && !isHtmlDoc(text)) {
+          return text;
+        }
       }
-      const sqlText = await res.text();
+    } catch {}
+
+    // 2. Fallback to bundled static asset (Cloudflare Workers ./dist/001_erp_production_schema.sql)
+    const staticRes = await fetch('/001_erp_production_schema.sql');
+    if (!staticRes.ok) {
+      throw new Error(`Unable to load migration SQL (HTTP ${staticRes.status}).`);
+    }
+    const staticText = await staticRes.text();
+    if (!staticText.trim() || isHtmlDoc(staticText)) {
+      throw new Error('SQL file could not be loaded (received HTML page instead of SQL).');
+    }
+    return staticText;
+  };
+
+  const handleCopySchemaSql = async () => {
+    try {
+      const sqlText = await loadValidSchemaSql();
       let copiedOk = false;
       try {
         if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -169,12 +216,7 @@ export const DataModeModal: React.FC<DataModeModalProps> = ({
 
   const handleDownloadSchemaSql = async () => {
     try {
-      const res = await fetchApi('/api/supabase/schema-sql?download=1');
-      if (!res.ok) {
-        setMigrationStatus({ ok: false, msg: `Unable to download migration SQL (HTTP ${res.status}).` });
-        return;
-      }
-      const sqlText = await res.text();
+      const sqlText = await loadValidSchemaSql();
       const blob = new Blob([sqlText], { type: 'application/sql;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -443,6 +485,15 @@ export const DataModeModal: React.FC<DataModeModalProps> = ({
                         </span>
                       </button>
                     )}
+                    <button
+                      onClick={handleRunProductionReadWriteTest}
+                      disabled={isRunningLiveTest}
+                      data-testid="run-supabase-live-test-btn"
+                      className="px-3 py-2 bg-teal-700 hover:bg-teal-800 text-white rounded-xl font-bold flex items-center gap-1.5 text-xs shadow-sm transition-all disabled:opacity-50 cursor-pointer"
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5 text-teal-200" />
+                      <span>{isRunningLiveTest ? 'Testing Supabase...' : 'Run Live Read/Write Test'}</span>
+                    </button>
                   </div>
                 </div>
 
@@ -455,6 +506,37 @@ export const DataModeModal: React.FC<DataModeModalProps> = ({
                     }`}
                   >
                     {migrationStatus?.msg || cloudSyncState.error}
+                  </div>
+                )}
+
+                {liveTestReport && (
+                  <div className="mt-3 p-3 rounded-xl bg-slate-950 text-slate-100 border border-slate-700 space-y-2">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-bold text-teal-300">
+                        Production Supabase Verification ({liveTestReport.url})
+                      </span>
+                      <span
+                        className={`px-2 py-0.5 rounded font-mono font-bold text-[10px] ${
+                          liveTestReport.connected
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                            : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                        }`}
+                      >
+                        {liveTestReport.connected ? 'VERIFIED LIVE' : 'ACTION REQUIRED'}
+                      </span>
+                    </div>
+                    <div className="space-y-1 font-mono text-[10px]">
+                      {liveTestReport.steps.map((s, idx) => (
+                        <div key={idx} className="flex items-start gap-2">
+                          <span className={s.ok ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
+                            {s.ok ? '[PASS]' : '[FAIL]'}
+                          </span>
+                          <span className="text-slate-300">
+                            <strong className="text-white">{s.step}:</strong> {s.detail}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
 

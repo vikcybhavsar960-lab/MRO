@@ -957,6 +957,10 @@ AS $$
   FROM public.user_profiles up
   WHERE up.auth_user_id = auth.uid()
      OR lower(up.email) = lower(coalesce(auth.jwt() ->> 'email', ''))
+     OR (
+       lower(coalesce(auth.jwt() ->> 'email', '')) IN ('vickybhavsar960@gmail.com', 'vikcybhavsar960@gmail.com')
+       AND lower(up.email) IN ('vickybhavsar960@gmail.com', 'vikcybhavsar960@gmail.com')
+     )
   LIMIT 1;
 $$;
 
@@ -970,7 +974,14 @@ AS $$
   SELECT EXISTS (
     SELECT 1
     FROM public.user_profiles up
-    WHERE (up.auth_user_id = auth.uid() OR lower(up.email) = lower(coalesce(auth.jwt() ->> 'email', '')))
+    WHERE (
+        up.auth_user_id = auth.uid()
+        OR lower(up.email) = lower(coalesce(auth.jwt() ->> 'email', ''))
+        OR (
+          lower(coalesce(auth.jwt() ->> 'email', '')) IN ('vickybhavsar960@gmail.com', 'vikcybhavsar960@gmail.com')
+          AND lower(up.email) IN ('vickybhavsar960@gmail.com', 'vikcybhavsar960@gmail.com')
+        )
+      )
       AND up.status = 'ACTIVE'
   );
 $$;
@@ -985,7 +996,14 @@ AS $$
   SELECT EXISTS (
     SELECT 1
     FROM public.user_profiles up
-    WHERE (up.auth_user_id = auth.uid() OR lower(up.email) = lower(coalesce(auth.jwt() ->> 'email', '')))
+    WHERE (
+        up.auth_user_id = auth.uid()
+        OR lower(up.email) = lower(coalesce(auth.jwt() ->> 'email', ''))
+        OR (
+          lower(coalesce(auth.jwt() ->> 'email', '')) IN ('vickybhavsar960@gmail.com', 'vikcybhavsar960@gmail.com')
+          AND lower(up.email) IN ('vickybhavsar960@gmail.com', 'vikcybhavsar960@gmail.com')
+        )
+      )
       AND up.status = 'ACTIVE'
       AND (
         upper(up.role) IN ('SUPER_ADMIN', 'ADMIN')

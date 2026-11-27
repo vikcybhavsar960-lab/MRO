@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   X,
   Plus,
@@ -17,13 +17,23 @@ import {
   Layers,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
-import { RequirementItem, Vendor } from '../../types';
+import {
+  EmailCatalogueMatchCandidate,
+  EmailPipelineDiagnostic,
+  EmailRfqItem,
+  RequirementItem,
+  Vendor,
+} from '../../types';
 import {
   recommendCategoryForRequirement,
-  recommendVendorsForRequirement,
 } from '../../services/categoryMatchingService';
 import { matchProductAiQuery } from '../../services/catalogImportEngine';
 import { AiCatalogueMatchResult } from '../../types/catalogImport';
+import { loadEmailRfqs, saveEmailRfqs } from '../../services/emailRfqService';
+import {
+  formatDiagnosticLines,
+  parseEmailRequirementWithCatalogue,
+} from '../../services/emailRequirementPipeline';
 
 interface FormRequirementItem extends Omit<RequirementItem, 'id'> {
   isCategoryManuallySelected?: boolean;
@@ -35,14 +45,35 @@ interface FormRequirementItem extends Omit<RequirementItem, 'id'> {
   originalRequirementText?: string;
   aiMatchResult?: AiCatalogueMatchResult;
   isAiMatchConfirmed?: boolean;
+  // Email Requirement Auto-Fill & Catalogue Verification Metadata
+  productTitle?: string;
+  confidenceLevel?: 'High' | 'Medium' | 'Low';
+  lowConfidenceFields?: string[];
+  catalogueMatched?: boolean;
+  catalogueProductId?: string;
+  catalogueMrp?: number;
+  catalogueDiscount?: number;
+  cataloguePurchaseRate?: number;
+  catalogueSupplier?: string;
+  catalogueMatchReason?: string;
+  multipleMatchesFound?: boolean;
+  catalogueCandidates?: EmailCatalogueMatchCandidate[];
+  sourceOrigin?: 'EMAIL_BODY' | 'ATTACHMENT' | 'COMBINED';
 }
 
 interface NewRequirementModalProps {
   isOpen: boolean;
   onClose: () => void;
+  initialEmailDraft?: EmailRfqItem | null;
+  onEmailDraftConverted?: (emailId: string, reqId: string) => void;
 }
 
-export const NewRequirementModal: React.FC<NewRequirementModalProps> = ({ isOpen, onClose }) => {
+export const NewRequirementModal: React.FC<NewRequirementModalProps> = ({
+  isOpen,
+  onClose,
+  initialEmailDraft = null,
+  onEmailDraftConverted,
+}) => {
   const {
     customers,
     companies,
@@ -128,6 +159,24 @@ export const NewRequirementModal: React.FC<NewRequirementModalProps> = ({ isOpen
   const [expectedDeliveryDate, setExpectedDeliveryDate] = useState('');
   const [priority, setPriority] = useState<'High' | 'Medium' | 'Low'>('Medium');
 
+  // Email Auto-Fill & Audit Preservation State
+  const [selectedEmailDraftId, setSelectedEmailDraftId] = useState<string>(initialEmailDraft?.id || '');
+  const [emailSubject, setEmailSubject] = useState<string>(initialEmailDraft?.subject || '');
+  const [originalEmailText, setOriginalEmailText] = useState<string>(initialEmailDraft?.fullBodyText || '');
+  const [emailSenderDisplay, setEmailSenderDisplay] = useState<string>(
+    initialEmailDraft ? `${initialEmailDraft.senderName} <${initialEmailDraft.senderEmail}>` : ''
+  );
+  const [emailDiagnostic, setEmailDiagnostic] = useState<EmailPipelineDiagnostic | null>(
+    initialEmailDraft?.diagnostic || null
+  );
+  const [showOriginalEmail, setShowOriginalEmail] = useState<boolean>(true);
+  const [formValidationError, setFormValidationError] = useState<string | null>(null);
+
+  const availablePendingEmails = useMemo(
+    () => loadEmailRfqs().filter((e) => e.status !== 'SAVED_AS_RFQ' || e.id === initialEmailDraft?.id),
+    [isOpen, initialEmailDraft?.id]
+  );
+
   // Quick Add Company Modal
   const [isQuickCompanyOpen, setIsQuickCompanyOpen] = useState(false);
   const [quickCompName, setQuickCompName] = useState('');
@@ -175,6 +224,179 @@ export const NewRequirementModal: React.FC<NewRequirementModalProps> = ({ isOpen
       isCategoryManuallySelected: false,
     },
   ]);
+
+  // Auto-Fill Requirement Form cleanly from an EmailRfqItem (re-running live 6-level ERP catalogue match)
+  const applyEmailDraftToForm = React.useCallback(
+    (email: EmailRfqItem) => {
+      setFormValidationError(null);
+      setSelectedEmailDraftId(email.id);
+      setRequirementSource('Email');
+      setEmailSubject(email.subject || '');
+      setOriginalEmailText(email.fullBodyText || email.bodySnippet || '');
+      setEmailSenderDisplay(`${email.senderName || email.companyName} <${email.senderEmail}>`);
+      setReferenceNumber(email.messageId || email.id);
+      if (email.receivedDate && /^\d{4}-\d{2}-\d{2}$/.test(email.receivedDate)) {
+        setRequirementDate(email.receivedDate);
+      }
+      setRemarks(
+        email.remarks ||
+          `Imported from email "${email.subject}" (${email.senderEmail}). Please verify confidence & catalogue match before saving.`
+      );
+
+      // Re-run parser + live 6-level ERP catalogue matcher on raw text if needed so latest ERP products/brands/vendors are matched
+      const reParsed = parseEmailRequirementWithCatalogue({
+        rawText: email.fullBodyText || email.bodySnippet || '',
+        subject: email.subject || '',
+        senderEmail: email.senderEmail || '',
+        senderName: email.senderName,
+        customers,
+        products,
+        brands,
+        vendors,
+        attachmentCount: email.attachments?.length || 0,
+        aiItems:
+          email.detectedItems && email.detectedItems.length > 0
+            ? email.detectedItems
+            : undefined,
+      });
+
+      setEmailDiagnostic(email.diagnostic || reParsed.diagnostic);
+
+      // Match Buyer Company / Customer
+      const matchedComp =
+        companies.find((c) => c.id === email.matchedCustomerId) ||
+        companies.find(
+          (c) =>
+            c.companyName.toLowerCase() === (email.companyName || '').toLowerCase() ||
+            (reParsed.matchedCustomer &&
+              c.companyName.toLowerCase() === reParsed.matchedCustomer.companyName.toLowerCase())
+        ) ||
+        customers.find((c) => c.id === email.matchedCustomerId || c.id === reParsed.matchedCustomer?.id);
+
+      if (matchedComp) {
+        setSelectedCompanyId(matchedComp.id);
+        const validExecs = purchaseExecutives.filter(
+          (pe) =>
+            pe.companyId === matchedComp.id ||
+            pe.companyName.toLowerCase() === matchedComp.companyName.toLowerCase()
+        );
+        const execMatch = validExecs.find(
+          (pe) =>
+            (pe.email && pe.email.toLowerCase() === email.senderEmail.toLowerCase()) ||
+            pe.name.toLowerCase() === (email.senderName || '').toLowerCase()
+        );
+        setSelectedExecutiveId(execMatch?.id || validExecs[0]?.id || '');
+      }
+
+      const sourceItems = reParsed.items.length > 0 ? reParsed.items : email.detectedItems || [];
+      if (sourceItems.length > 0) {
+        const mappedItems: FormRequirementItem[] = sourceItems.map((it) => {
+          const matchedVendorObj = it.catalogueSupplier
+            ? vendors.find(
+                (v) => v.companyName.toLowerCase().trim() === it.catalogueSupplier!.toLowerCase().trim()
+              )
+            : undefined;
+          const fallbackCategory =
+            it.category && categories.some((c) => c.name.toLowerCase() === it.category!.toLowerCase())
+              ? categories.find((c) => c.name.toLowerCase() === it.category!.toLowerCase())!.name
+              : recommendCategoryForRequirement(
+                  {
+                    itemName: it.itemName,
+                    description: it.brand || '',
+                    specification: it.specification || '',
+                  },
+                  categories
+                ).category || '';
+
+          return {
+            itemName: it.itemName || '',
+            productTitle: it.productTitle || it.itemName || '',
+            category: fallbackCategory,
+            recommendedCategory: fallbackCategory,
+            subCategory: it.subCategory || '',
+            brand: it.brand || '',
+            // Anti-hallucination: keep partNumber empty if not explicitly in email or matched in catalogue
+            partNumber: it.partNumber || '',
+            modelNumber: it.modelNumber || '',
+            specification: it.specification || '',
+            quantity: it.quantity || 1,
+            uom: (it.uom as any) || 'NOS',
+            targetPrice: it.cataloguePurchaseRate || it.targetPrice || 0,
+            requiredDeliveryDate: email.receivedDate || getTodayLocalDate(),
+            priority: 'Medium',
+            remarks: it.catalogueMatchReason || '',
+            originalRequirementText: it.originalLineText || it.itemName,
+            isCategoryManuallySelected: false,
+            assignedVendorId: matchedVendorObj?.id,
+            assignedVendorName: matchedVendorObj?.companyName || it.catalogueSupplier,
+            vendorRate: it.cataloguePurchaseRate,
+            confidenceLevel: it.confidenceLevel || (it.confidence >= 85 ? 'High' : it.confidence >= 60 ? 'Medium' : 'Low'),
+            lowConfidenceFields: it.lowConfidenceFields || [],
+            catalogueMatched: it.catalogueMatched,
+            catalogueProductId: it.catalogueProductId,
+            catalogueMrp: it.catalogueMrp,
+            catalogueDiscount: it.catalogueDiscount,
+            cataloguePurchaseRate: it.cataloguePurchaseRate,
+            catalogueSupplier: it.catalogueSupplier,
+            catalogueMatchReason: it.catalogueMatchReason,
+            multipleMatchesFound: it.multipleMatchesFound,
+            catalogueCandidates: it.catalogueCandidates,
+            sourceOrigin: it.sourceOrigin,
+          };
+        });
+        setItems(mappedItems);
+      }
+    },
+    [brands, categories, companies, customers, products, purchaseExecutives, vendors]
+  );
+
+  // Auto-populate immediately whenever opened with an initialEmailDraft from Email RFQ Inbox
+  useEffect(() => {
+    if (isOpen && initialEmailDraft) {
+      applyEmailDraftToForm(initialEmailDraft);
+    }
+  }, [isOpen, initialEmailDraft, applyEmailDraftToForm]);
+
+  const handleSelectEmailCatalogueCandidate = (index: number, candidate: EmailCatalogueMatchCandidate) => {
+    const matchedVendorObj = candidate.supplierName
+      ? vendors.find((v) => v.companyName.toLowerCase().trim() === candidate.supplierName!.toLowerCase().trim())
+      : undefined;
+
+    setItems((prev) => {
+      const copy = [...prev];
+      const existing = copy[index];
+      const normalizedCat =
+        categories.find((c) => c.name.toLowerCase() === (candidate.category || '').toLowerCase())?.name ||
+        existing.category;
+
+      copy[index] = {
+        ...existing,
+        itemName: candidate.productName || existing.itemName,
+        brand: candidate.brand || existing.brand,
+        partNumber: candidate.partCode || existing.partNumber,
+        modelNumber: candidate.modelNumber || existing.modelNumber,
+        category: normalizedCat,
+        recommendedCategory: normalizedCat,
+        subCategory: candidate.subCategory || existing.subCategory,
+        specification: candidate.specification || existing.specification,
+        targetPrice: candidate.purchaseRate || candidate.mrp || existing.targetPrice,
+        catalogueMatched: true,
+        catalogueProductId: candidate.productId,
+        catalogueMrp: candidate.mrp,
+        catalogueDiscount: candidate.discountPercent,
+        cataloguePurchaseRate: candidate.purchaseRate,
+        catalogueSupplier: candidate.supplierName,
+        catalogueMatchReason: `User selected candidate: ${candidate.productName} (${candidate.partCode || 'No Part Code'})`,
+        multipleMatchesFound: false,
+        confidenceLevel: 'High',
+        lowConfidenceFields: [],
+        assignedVendorId: matchedVendorObj?.id || existing.assignedVendorId,
+        assignedVendorName: matchedVendorObj?.companyName || candidate.supplierName || existing.assignedVendorName,
+        vendorRate: candidate.purchaseRate ?? existing.vendorRate,
+      };
+      return copy;
+    });
+  };
 
   if (!isOpen) return null;
 
@@ -446,20 +668,23 @@ export const NewRequirementModal: React.FC<NewRequirementModalProps> = ({ isOpen
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setFormValidationError(null);
     if (!activeCompany) {
-      alert('Please select or register a company first.');
+      setFormValidationError('Please select or register a company first.');
       return;
     }
 
     // Validate that every item has a valid category selected
     for (let i = 0; i < items.length; i++) {
       if (!items[i].category) {
-        alert(`Please select a Material Category for Item #${i + 1} (${items[i].itemName || 'Unnamed Item'}).`);
+        setFormValidationError(
+          `Please select a Material Category for Item #${i + 1} (${items[i].itemName || 'Unnamed Item'}) before saving.`
+        );
         return;
       }
     }
 
-    addRequirement({
+    const createdReq = addRequirement({
       customerId: activeCompany.id,
       customerName: activeCompany.companyName,
       companyId: activeCompany.id,
@@ -473,6 +698,9 @@ export const NewRequirementModal: React.FC<NewRequirementModalProps> = ({ isOpen
       rfqNumber,
       requirementSource,
       referenceNumber: referenceNumber.trim() || undefined,
+      emailSubject: emailSubject.trim() || undefined,
+      originalEmailText: originalEmailText || undefined,
+      sourceEmailId: selectedEmailDraftId || undefined,
       contactPerson: activeExecutive?.name || activeCompany.contactPerson || 'Procurement Buyer',
       customerEmail: activeExecutive?.email || activeCompany.email || '',
       customerMobile: activeExecutive?.mobile || activeCompany.mobile || '',
@@ -493,6 +721,26 @@ export const NewRequirementModal: React.FC<NewRequirementModalProps> = ({ isOpen
       })),
       remarks,
     });
+
+    if (selectedEmailDraftId) {
+      try {
+        const allEmails = loadEmailRfqs();
+        const updatedEmails = allEmails.map((em) =>
+          em.id === selectedEmailDraftId
+            ? {
+                ...em,
+                status: 'SAVED_AS_RFQ' as const,
+                createdRequirementId: createdReq.id,
+              }
+            : em
+        );
+        saveEmailRfqs(updatedEmails);
+      } catch {}
+      if (onEmailDraftConverted) {
+        onEmailDraftConverted(selectedEmailDraftId, createdReq.id);
+        return;
+      }
+    }
 
     onClose();
   };
@@ -565,6 +813,115 @@ export const NewRequirementModal: React.FC<NewRequirementModalProps> = ({ isOpen
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-6 overflow-y-auto space-y-6 flex-1">
+          {/* Email Requirement Auto-Fill Selector & Verbatim Audit Preview */}
+          <div className="bg-indigo-50/70 border border-indigo-200 rounded-xl p-4 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Mail className="w-4 h-4 text-indigo-600 shrink-0" />
+                <div>
+                  <h4 className="text-xs font-extrabold text-indigo-950">
+                    Auto-Fill from Received Email Requirement (Preview Before Save)
+                  </h4>
+                  <p className="text-[11px] text-indigo-700">
+                    Populates Brand, Product, Part Code, Spec, Qty, UOM &amp; ERP Catalogue MRP/Discount/Rate/Supplier — never auto-saves without your confirmation.
+                  </p>
+                </div>
+              </div>
+
+              {availablePendingEmails.length > 0 && (
+                <select
+                  value={selectedEmailDraftId}
+                  data-testid="select-email-autofill-dropdown"
+                  onChange={(e) => {
+                    const chosen = availablePendingEmails.find((em) => em.id === e.target.value);
+                    if (chosen) applyEmailDraftToForm(chosen);
+                  }}
+                  className="text-xs px-2.5 py-1.5 bg-white border border-indigo-300 rounded-lg font-bold text-indigo-950 max-w-xs"
+                >
+                  <option value="">-- Select Received Email to Auto-Fill --</option>
+                  {availablePendingEmails.map((em) => (
+                    <option key={em.id} value={em.id}>
+                      {em.id}: {em.subject.slice(0, 48)} ({em.detectedItems.length} items)
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            {(emailSubject || originalEmailText) && (
+              <div className="space-y-2 pt-2 border-t border-indigo-200/70">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-indigo-900 mb-1">Email Subject</label>
+                    <input
+                      type="text"
+                      value={emailSubject}
+                      onChange={(e) => setEmailSubject(e.target.value)}
+                      data-testid="req-email-subject-input"
+                      placeholder="Email subject"
+                      className="w-full text-xs p-2 border border-indigo-200 rounded-lg bg-white font-semibold text-slate-900"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-indigo-900 mb-1">Email Sender</label>
+                    <input
+                      type="text"
+                      readOnly
+                      value={emailSenderDisplay || 'Not Found'}
+                      className="w-full text-xs p-2 border border-indigo-200 rounded-lg bg-slate-50 font-mono text-slate-700"
+                    />
+                  </div>
+                </div>
+
+                {emailDiagnostic && (
+                  <div
+                    data-testid="email-pipeline-diagnostic-log"
+                    className="p-2.5 rounded-lg bg-slate-900 text-slate-200 font-mono text-[10px] flex flex-wrap gap-x-3 gap-y-1"
+                  >
+                    {formatDiagnosticLines(emailDiagnostic).map((line, dIdx) => (
+                      <span
+                        key={dIdx}
+                        className={line.endsWith('YES') ? 'text-emerald-400 font-bold' : 'text-amber-300 font-bold'}
+                      >
+                        {line}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[11px] font-bold text-indigo-900">
+                      Original Email (Preserved Verbatim — Read-Only)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setShowOriginalEmail((v) => !v)}
+                      className="text-[10px] font-bold text-indigo-700 hover:underline cursor-pointer"
+                    >
+                      {showOriginalEmail ? 'Hide Original Email' : 'Show Original Email'}
+                    </button>
+                  </div>
+                  {showOriginalEmail && (
+                    <pre
+                      data-testid="req-original-email-text"
+                      className="w-full max-h-36 overflow-y-auto p-2.5 rounded-lg bg-white border border-indigo-200 text-[11px] font-mono text-slate-800 whitespace-pre-wrap"
+                    >
+                      {originalEmailText || 'Not Found'}
+                    </pre>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {formValidationError && (
+            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+              <span>{formValidationError}</span>
+            </div>
+          )}
+
           {/* Top Primary Section: 1. Company, 2. Executive, 3. Date, 4. RFQ No, 5. Source, 6. Ref No, 7. Remarks */}
           <div className="bg-slate-50 p-4 sm:p-5 rounded-xl border border-slate-200 space-y-4">
             <div className="flex items-center justify-between pb-2 border-b border-slate-200">
@@ -1106,27 +1463,138 @@ export const NewRequirementModal: React.FC<NewRequirementModalProps> = ({ isOpen
                       </div>
 
                       <div>
-                        <label className="block text-[11px] font-semibold text-slate-600 mb-1">Make / Brand</label>
+                        <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                          Make / Brand{' '}
+                          {!item.brand && (
+                            <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.2 rounded border border-amber-200 ml-1">
+                              Not Found
+                            </span>
+                          )}
+                        </label>
                         <input
                           type="text"
                           value={item.brand}
                           onChange={(e) => handleItemChange(idx, 'brand', e.target.value)}
-                          placeholder="Schneider, Siemens, SKF, Festo..."
+                          placeholder="Not Found — enter brand if known"
                           className="w-full text-xs p-2 border border-slate-300 rounded-lg"
                         />
                       </div>
 
                       <div>
-                        <label className="block text-[11px] font-semibold text-slate-600 mb-1">Part / Model No.</label>
+                        <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                          Part Code / Model No.{' '}
+                          {!item.partNumber && (
+                            <span
+                              data-testid={`part-code-not-specified-${idx}`}
+                              className="text-[10px] font-bold text-slate-600 bg-slate-100 px-1.5 py-0.2 rounded border border-slate-200 ml-1"
+                            >
+                              Not specified
+                            </span>
+                          )}
+                        </label>
                         <input
                           type="text"
                           value={item.partNumber}
                           onChange={(e) => handleItemChange(idx, 'partNumber', e.target.value)}
-                          placeholder="e.g. NSX100F, 6206-2RS, 3NA3805..."
+                          placeholder="Not specified (never fabricated)"
                           className="w-full text-xs p-2 border border-slate-300 rounded-lg font-mono"
                         />
                       </div>
                     </div>
+
+                    {/* Email Extraction Confidence & Catalogue Pricing Strip (MRP / Discount / Purchase Rate / Supplier) */}
+                    {(item.confidenceLevel || item.catalogueMatchReason || item.multipleMatchesFound) && (
+                      <div className="p-3 rounded-xl border border-slate-200 bg-slate-50/90 space-y-2.5 text-xs">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-bold text-slate-800">Catalogue Verification &amp; Confidence:</span>
+                            <span
+                              data-testid={`item-confidence-badge-${idx}`}
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                                item.confidenceLevel === 'High'
+                                  ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                  : item.confidenceLevel === 'Medium'
+                                    ? 'bg-amber-100 text-amber-800 border-amber-300'
+                                    : 'bg-rose-100 text-rose-800 border-rose-300'
+                              }`}
+                            >
+                              Confidence: {item.confidenceLevel || 'Medium'}
+                            </span>
+                            {item.sourceOrigin && (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-white border border-slate-200 text-slate-600">
+                                Source: {item.sourceOrigin.replace('_', ' ')}
+                              </span>
+                            )}
+                          </div>
+                          {item.catalogueMatchReason && (
+                            <span className="text-[11px] text-slate-600">{item.catalogueMatchReason}</span>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                          <div className="bg-white p-2 rounded-lg border border-slate-200">
+                            <span className="text-[10px] text-slate-500 block">Catalogue MRP</span>
+                            <strong className="font-mono text-slate-900">
+                              {item.catalogueMrp ? `₹${item.catalogueMrp.toLocaleString('en-IN')}` : 'Not Found'}
+                            </strong>
+                          </div>
+                          <div className="bg-white p-2 rounded-lg border border-slate-200">
+                            <span className="text-[10px] text-slate-500 block">Discount</span>
+                            <strong className="font-mono text-slate-900">
+                              {typeof item.catalogueDiscount === 'number' ? `${item.catalogueDiscount}%` : 'Not Found'}
+                            </strong>
+                          </div>
+                          <div className="bg-white p-2 rounded-lg border border-slate-200">
+                            <span className="text-[10px] text-slate-500 block">Purchase Rate</span>
+                            <strong className="font-mono text-emerald-700">
+                              {item.cataloguePurchaseRate
+                                ? `₹${item.cataloguePurchaseRate.toLocaleString('en-IN')}`
+                                : 'Not Found'}
+                            </strong>
+                          </div>
+                          <div className="bg-white p-2 rounded-lg border border-slate-200">
+                            <span className="text-[10px] text-slate-500 block">Supplier</span>
+                            <strong className="text-slate-900 truncate block">
+                              {item.catalogueSupplier || item.assignedVendorName || 'Not Found'}
+                            </strong>
+                          </div>
+                        </div>
+
+                        {item.lowConfidenceFields && item.lowConfidenceFields.length > 0 && (
+                          <div className="p-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-[11px] font-semibold flex items-center gap-1.5">
+                            <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                            <span>
+                              Low-confidence / missing fields requiring review: {item.lowConfidenceFields.join(', ')}. Please confirm or edit before saving.
+                            </span>
+                          </div>
+                        )}
+
+                        {item.multipleMatchesFound && item.catalogueCandidates && item.catalogueCandidates.length > 0 && (
+                          <div className="p-2.5 rounded-lg bg-purple-50 border border-purple-200 space-y-2">
+                            <div className="text-[11px] font-bold text-purple-900">
+                              Multiple catalogue matches found — select the exact product below (never auto-selected blindly):
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {item.catalogueCandidates.map((cand, cIdx) => (
+                                <button
+                                  key={cIdx}
+                                  type="button"
+                                  onClick={() => handleSelectEmailCatalogueCandidate(idx, cand)}
+                                  className="px-2.5 py-1.5 bg-white hover:bg-purple-100 border border-purple-300 rounded-lg text-[11px] text-left flex items-center gap-2 cursor-pointer transition-colors"
+                                >
+                                  <span className="font-bold text-slate-900">{cand.brand}</span>
+                                  <span className="font-mono text-purple-800">{cand.partCode || 'No Code'}</span>
+                                  <span className="text-slate-600 truncate max-w-[180px]">{cand.productName}</span>
+                                  {cand.purchaseRate && (
+                                    <span className="font-mono font-bold text-emerald-700">₹{cand.purchaseRate}</span>
+                                  )}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     {/* Quantity, Target Price, Specifications */}
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
